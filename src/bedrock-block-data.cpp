@@ -62,7 +62,11 @@ public:
   }
 
   static std::shared_ptr<mcfile::je::Block const> Identity(mcfile::be::Block const &b, int dataVersion) {
-    return mcfile::je::Block::FromName(b.fName, dataVersion);
+    if (auto block = mcfile::je::Block::FromName(b.fName, dataVersion); block) {
+      return block;
+    }
+    // Unknown block should be air
+    return mcfile::je::Block::FromId(mcfile::blocks::minecraft::air, dataVersion);
   }
 
 private:
