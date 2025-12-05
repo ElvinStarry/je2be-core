@@ -1336,6 +1336,7 @@ public:
     if (name) {
       j[u8"CustomName"] = props::CreateJavaTextComponent(*name, dataVersion);
     }
+    CopyBoolValues(b, j, {{u8"CustomNameVisible"}});
   }
 
   static void DeathTime(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
