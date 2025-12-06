@@ -2443,10 +2443,11 @@ public:
   }
 
   static CompoundTagPtr Light(Block const &b, CompoundTagConstPtr const &, Options const &o) {
-    auto c = New(u8"light_block");
-    auto s = States();
     auto level = strings::ToI32(b.property(u8"level", u8"15"));
-    s->set(u8"block_light_level", Int(level ? *level : 15));
+    auto clamped = ClosedRange<i32>::Clamp(level ? *level : 15, 0, 15);
+    auto name = u8"light_block_" + mcfile::String::ToString(clamped);
+    auto c = New(name);
+    auto s = States();
     return AttachStates(c, s);
   }
 

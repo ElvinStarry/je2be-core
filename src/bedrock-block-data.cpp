@@ -1066,9 +1066,27 @@ private:
     return bName;
   }
 
+  static std::optional<i32> LightLevelFromName(String const &bName) {
+    std::u8string const key = Namespace::Remove(bName);
+    std::u8string const prefix = u8"light_block_";
+    if (!key.starts_with(prefix)) {
+      return std::nullopt;
+    }
+    auto suffix = key.substr(prefix.size());
+    if (suffix.empty()) {
+      return std::nullopt;
+    }
+    if (auto level = strings::ToI32(suffix); level) {
+      return ClosedRange<i32>::Clamp(*level, 0, 15);
+    } else {
+      return std::nullopt;
+    }
+  }
+
   static String LightBlock(String const &bName, CompoundTag const &s, Props &p, int outputDataVersion) {
-    auto level = s.int32(u8"block_light_level", 0);
-    p[u8"level"] = Int(level);
+    auto level = LightLevelFromName(bName);
+    auto levelFromState = ClosedRange<i32>::Clamp(s.int32(u8"block_light_level", 0), 0, 15);
+    p[u8"level"] = Int(level ? *level : levelFromState);
     Submergible(s, p);
     return Ns() + u8"light";
   }
@@ -2944,6 +2962,16 @@ private:
     E(lever, Lever);
     E(lightning_rod, LightningRod);
     E(light_block, LightBlock);
+    static std::array<std::u8string, 16> const sLightBlockNames = []() {
+      std::array<std::u8string, 16> ret{};
+      for (int level = 0; level < 16; level++) {
+        ret[level] = u8"light_block_" + mcfile::String::ToString(level);
+      }
+      return ret;
+    }();
+    for (auto const &name : sLightBlockNames) {
+      table->try_emplace(name, LightBlock);
+    }
     E(light_weighted_pressure_plate, BlockWithPowerFromRedstoneSignal);
     E(waterlily, Rename(u8"lily_pad"));
     E(loom, BlockWithFacing4FromDirectionA);
