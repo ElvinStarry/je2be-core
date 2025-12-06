@@ -953,7 +953,6 @@ public:
       props::SetJsonString(json, u8"text", *name);
       j[u8"CustomName"] = String(props::StringFromJson(json));
     }
-    CopyBoolValues(b, j, {{u8"CustomNameVisible"}});
   }
 
   static void DeathTime(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {

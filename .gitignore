@@ -1,14 +1,5 @@
 /build
 /xcode
-/CMakeCache.txt
-/CMakeFiles/
-/Testing/
-/build.ninja
-/rules.ninja
-/.ninja_deps
-/.ninja_log
-/cmake_install.cmake
-/compile_commands.json
 *.mca
 *.dat_old
 level*.dat
