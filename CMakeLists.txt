@@ -562,6 +562,9 @@ target_include_directories(p2j PRIVATE ${pbar_SOURCE_DIR})
 add_executable(dump example/dump.cpp ${je2be_header_files})
 target_link_libraries(dump je2be)
 
+add_executable(export_xuids example/export_xuids.cpp ${je2be_header_files})
+target_link_libraries(export_xuids je2be)
+
 add_executable(je2be-test ${test_files} ${je2be_header_files})
 target_link_libraries(je2be-test ${je2be_exe_link_libraries} doctest)
 target_include_directories(je2be-test PRIVATE src)
@@ -574,7 +577,7 @@ if (MSVC)
   foreach(target IN ITEMS j2b b2j x2j je2be-test)
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND "${CMAKE_COMMAND}" -E copy "${mimalloc_BINARY_DIR}/\$(Configuration)/mimalloc.dll" "$<TARGET_FILE_DIR:${target}>/"
-      COMMAND "${CMAKE_COMMAND}" -E copy "${mimalloc_BINARY_DIR}/\$(Configuration)/mimalloc-redirect.dll" "$<TARGET_FILE_DIR:${target}>/"
+      COMMAND "${CMAKE_COMMAND}" -E copy "${mimalloc_BINARY_DIR}/\$(Configuration)/mimalloc-redirect-arm64.dll" "$<TARGET_FILE_DIR:${target}>/"
       COMMENT "Copy mimalloc dlls to output directory")
   endforeach()
   if (JE2BE_CORE_USE_INTEL_COMPILER)

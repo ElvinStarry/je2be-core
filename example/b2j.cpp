@@ -1,5 +1,7 @@
 #include <cxxopts.hpp>
+#include <fstream>
 #include <je2be.hpp>
+#include <nlohmann/json.hpp>
 
 #if __has_include(<mimalloc.h>)
 #include <mimalloc.h>
@@ -114,7 +116,7 @@ int main(int argc, char *argv[]) {
   parser.add_options()                                    //
       ("i", "input directory", cxxopts::value<string>())  //
       ("o", "output directory", cxxopts::value<string>()) //
-      ("n", "num threads", cxxopts::value<unsigned int>()->default_value(to_string(thread::hardware_concurrency())));
+      ("n", "num threads", cxxopts::value<unsigned int>()->default_value(to_string(thread::hardware_concurrency())))("m", "player map", cxxopts::value<string>());
   cxxopts::ParseResult result;
   try {
     result = parser.parse(argc, argv);
@@ -140,13 +142,74 @@ int main(int argc, char *argv[]) {
 
   unsigned int concurrency = result["n"].as<unsigned int>();
 
+  Options options;
+  if (result.count("m")) {
+    string mapFile = result["m"].as<string>();
+    try {
+      std::ifstream f(mapFile);
+      if (f.good()) {
+        nlohmann::json j;
+        f >> j;
+        // Support simple {"xuid": "uuid"} or complex {"mapping_template": {"uuid": {...}}}
+        if (j.contains("mapping_template")) {
+          for (auto &[key, val] : j["mapping_template"].items()) {
+            if (val.contains("target_java_uuid")) {
+              string target = val["target_java_uuid"];
+              if (!target.empty()) {
+                // The key in mapping_template is usually UUID-like if coming from my scanner
+                // But here we need XUID -> UUID.
+                // Wait, my previous scanner outputted UUIDs (pseudo-UUIDs) as keys.
+                // The user wants XUID -> UUID mapping.
+
+                // If the user manually created a map XUID -> UUID, it might look like:
+                // { "12345678": "uuid..." }
+                // So let's fallback to simple KV.
+              }
+            }
+          }
+          // Actually, let's just assume simple Key-Value for XUID->UUID for the C++ tool
+          // OR Check if the key is XUID (numeric string)
+        }
+
+        // Simple iteration over all keys
+        for (auto &[key, val] : j.items()) {
+          if (key == "mapping_template")
+            continue; // Skip metadata
+
+          if (val.is_string()) {
+            string uuidStr = val;
+            if (!uuidStr.empty()) {
+              // Try parse UUID
+              auto uuid = Uuid::FromString(std::u8string(uuidStr.begin(), uuidStr.end()));
+              if (uuid) {
+                options.fPlayerMapping[key] = *uuid;
+              }
+            }
+          } else if (val.is_object() && val.contains("target_java_uuid")) {
+            // Support nested object format just in case
+            string uuidStr = val["target_java_uuid"];
+            if (!uuidStr.empty()) {
+              auto uuid = Uuid::FromString(std::u8string(uuidStr.begin(), uuidStr.end()));
+              if (uuid) {
+                options.fPlayerMapping[key] = *uuid;
+              }
+            }
+          }
+        }
+        cout << "Loaded " << options.fPlayerMapping.size() << " player mappings." << endl;
+      } else {
+        cerr << "Warning: Could not open mapping file: " << mapFile << endl;
+      }
+    } catch (exception &e) {
+      cerr << "Error parsing mapping file: " << e.what() << endl;
+    }
+  }
+
   auto start = chrono::high_resolution_clock::now();
   defer {
     auto elapsed = chrono::high_resolution_clock::now() - start;
     cout << float(chrono::duration_cast<chrono::milliseconds>(elapsed).count() / 1000.0f) << "s" << endl;
   };
-
-  Options options;
   options.fTempDirectory = mcfile::File::CreateTempDir(fs::temp_directory_path());
   defer {
     if (options.fTempDirectory) {

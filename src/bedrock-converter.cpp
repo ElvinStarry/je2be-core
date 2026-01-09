@@ -1,4 +1,6 @@
 #include <je2be/bedrock/converter.hpp>
+#include <minecraft-file.hpp>
+
 
 #include <je2be/bedrock/options.hpp>
 #include <je2be/bedrock/progress.hpp>
@@ -162,6 +164,8 @@ public:
     }
 
     LevelData::UpdateDataPacksAndEnabledFeatures(*levelDat, *bin);
+
+    ConvertAllPlayers(*db, output, options, *bin, dat->int32(u8"DataVersion", 0));
 
     if (!LevelData::Write(*levelDat, output / "level.dat")) {
       return JE2BE_ERROR;
@@ -419,6 +423,70 @@ private:
     }
 
     return Status::Ok();
+  }
+
+  static void ConvertAllPlayers(ReadonlyDb &db, fs::path const &output, Options const &options, Context &ctx, int dataVersion) {
+    auto outputDir = output / "playerdata";
+    fs::create_directories(outputDir);
+
+    auto iter = db.NewIterator();
+    if (!iter)
+      return;
+
+    iter->SeekToFirst();
+    std::string prefix = "player_";
+
+    while (iter->Valid()) {
+      auto key = iter->key();
+      std::string keyStr(key.data(), key.size());
+
+      if (keyStr.rfind(prefix, 0) == 0) {
+        std::string xuid = keyStr.substr(prefix.length());
+        if (xuid.rfind("server_", 0) == 0) {
+          xuid = xuid.substr(7);
+        }
+
+        auto val = iter->value();
+        std::string valStr(val.data(), val.size());
+        auto tag = mcfile::nbt::CompoundTag::Read(valStr, mcfile::Encoding::LittleEndian);
+
+        if (tag) {
+          je2be::Uuid targetUuid;
+          bool hasMapping = false;
+
+          auto it = options.fPlayerMapping.find(xuid);
+          if (it != options.fPlayerMapping.end()) {
+            targetUuid = it->second;
+            hasMapping = true;
+          } else {
+            try {
+              targetUuid = Uuid::GenWithI64Seed(std::stoll(xuid));
+            } catch (...) {
+            }
+          }
+
+          auto playerData = Entity::LocalPlayer(*tag, ctx, &targetUuid, dataVersion);
+          if (playerData && playerData->fEntity) {
+            auto nbt = playerData->fEntity;
+            if (auto root = std::dynamic_pointer_cast<mcfile::nbt::CompoundTag>(nbt)) {
+              std::u8string u8uuid = targetUuid.toString();
+              std::string uuidStr(u8uuid.begin(), u8uuid.end());
+              auto path = outputDir / (uuidStr + ".dat");
+              mcfile::stream::OutputStreamWriter writer(
+                  std::make_shared<mcfile::stream::GzFileOutputStream>(path),
+                  mcfile::Encoding::Java);
+              root->write(writer);
+            }
+
+            try {
+              ctx.setLocalPlayerIds(std::stoll(xuid), targetUuid);
+            } catch (...) {
+            }
+          }
+        }
+      }
+      iter->Next();
+    }
   }
 
   static bool PrepareOutputDirectory(std::filesystem::path const &output) {

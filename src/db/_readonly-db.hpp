@@ -134,6 +134,13 @@ public:
     }
   }
 
+  std::unique_ptr<leveldb::Iterator> NewIterator() const {
+    if (!fDb) {
+      return nullptr;
+    }
+    return std::unique_ptr<leveldb::Iterator>(fDb->NewIterator({}));
+  }
+
 private:
   ReadonlyDb(std::filesystem::path const &db, std::filesystem::path const &tempRoot, Status &out) {
     leveldb::DB *ptr = nullptr;

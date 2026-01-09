@@ -1,5 +1,7 @@
 #pragma once
 
+#include <map>
+#include <string>
 #include <unordered_set>
 
 #include <je2be/pos2.hpp>
@@ -18,6 +20,7 @@ public:
   std::unordered_set<Pos2i, Pos2iHasher> fChunkFilter;
   std::shared_ptr<Uuid const> fLocalPlayer;
   std::optional<std::filesystem::path> fTempDirectory;
+  std::map<std::string, Uuid> fPlayerMapping;
 };
 
 } // namespace je2be::bedrock
