@@ -203,7 +203,7 @@ public:
         Pos2i pos(cx, cz);
         entities[result->fUuid] = result->fEntity;
         if (result->fLeasherId) {
-          if (auto localPlayer = ctx.mapLocalPlayerId(*result->fLeasherId); localPlayer) {
+          if (auto localPlayer = ctx.mapPlayerId(*result->fLeasherId); localPlayer) {
             // Nop here.
           } else {
             ctx.fLeashedEntities[result->fUuid] = {.fChunk = pos, .fLeasherId = *result->fLeasherId};

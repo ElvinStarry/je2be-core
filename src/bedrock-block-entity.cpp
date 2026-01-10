@@ -1041,7 +1041,7 @@ public:
             continue;
           }
           Uuid uuid;
-          if (auto mapped = ctx.mapLocalPlayerId(v->fValue); mapped) {
+          if (auto mapped = ctx.mapPlayerId(v->fValue); mapped) {
             uuid = *mapped;
           } else {
             uuid = Uuid::GenWithI64Seed(v->fValue);
@@ -1212,7 +1212,7 @@ public:
   }
 
   static Uuid ConvertEntityId(long bedrock, Context const &ctx) {
-    if (auto mapped = ctx.mapLocalPlayerId(bedrock); mapped) {
+    if (auto mapped = ctx.mapPlayerId(bedrock); mapped) {
       return *mapped;
     } else {
       return Uuid::GenWithI64Seed(bedrock);

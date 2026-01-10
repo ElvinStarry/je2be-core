@@ -4,6 +4,10 @@ project(je2be)
 include(cmake/CPM.cmake)
 
 option(JE2BE_CORE_USE_INTEL_COMPILER OFF)
+# Limit ICU to the uc component to avoid building heavier i18n/io parts
+set(ICU_BUILD_UC ON CACHE BOOL "Build icu::uc" FORCE)
+set(ICU_BUILD_I18N OFF CACHE BOOL "Do not build icu::i18n" FORCE)
+set(ICU_BUILD_IO OFF CACHE BOOL "Do not build icu::io" FORCE)
 
 if ("${CMAKE_PROJECT_NAME}" STREQUAL "${PROJECT_NAME}")
   set(CMAKE_CXX_STANDARD 20)
@@ -574,10 +578,17 @@ target_link_libraries(j2b2j je2be doctest)
 target_include_directories(j2b2j PRIVATE src)
 
 if (MSVC)
+  if (CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64$" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^[Aa][Rr][Mm]64$")
+    set(mimalloc_redirect_dll "mimalloc-redirect-arm64.dll")
+  elseif (CMAKE_GENERATOR_PLATFORM MATCHES "^[Ww][Ii][Nn]32$")
+    set(mimalloc_redirect_dll "mimalloc-redirect32.dll")
+  else()
+    set(mimalloc_redirect_dll "mimalloc-redirect.dll")
+  endif()
   foreach(target IN ITEMS j2b b2j x2j je2be-test)
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND "${CMAKE_COMMAND}" -E copy "${mimalloc_BINARY_DIR}/\$(Configuration)/mimalloc.dll" "$<TARGET_FILE_DIR:${target}>/"
-      COMMAND "${CMAKE_COMMAND}" -E copy "${mimalloc_BINARY_DIR}/\$(Configuration)/mimalloc-redirect-arm64.dll" "$<TARGET_FILE_DIR:${target}>/"
+      COMMAND "${CMAKE_COMMAND}" -E copy "${mimalloc_BINARY_DIR}/\$(Configuration)/${mimalloc_redirect_dll}" "$<TARGET_FILE_DIR:${target}>/"
       COMMENT "Copy mimalloc dlls to output directory")
   endforeach()
   if (JE2BE_CORE_USE_INTEL_COMPILER)

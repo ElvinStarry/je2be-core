@@ -3,6 +3,7 @@
 #include <je2be/bedrock/options.hpp>
 #include <je2be/pos2.hpp>
 #include <je2be/status.hpp>
+#include <unordered_map>
 
 #include "_dimension-ext.hpp"
 #include "_nbt-ext.hpp"
@@ -53,8 +54,9 @@ public:
   std::optional<MapInfo::Map> mapFromUuid(i64 mapUuid) const;
   void structures(mcfile::Dimension d, Pos2i chunk, std::vector<StructureInfo::Structure> &buffer);
   std::shared_ptr<Context> make() const;
-  void setLocalPlayerIds(i64 entityIdB, Uuid const &entityIdJ);
-  std::optional<Uuid> mapLocalPlayerId(i64 entityIdB) const;
+  void addPlayerMapping(i64 entityIdB, Uuid const &entityIdJ);
+  std::optional<Uuid> mapPlayerId(i64 entityIdB) const;
+  std::optional<Uuid> mapPlayerUuid(std::string const &uuidStr) const;
   bool isLocalPlayerId(Uuid const &uuid) const;
   void setRootVehicle(Uuid const &vehicleUid);
   void setRootVehicleEntity(CompoundTagPtr const &vehicleEntity);
@@ -100,11 +102,8 @@ private:
   std::shared_ptr<StructureInfo const> fStructureInfo;
   std::unordered_set<i64> fUsedMapUuids;
 
-  struct LocalPlayer {
-    i64 fBedrockId;
-    Uuid fJavaId;
-  };
-  std::optional<LocalPlayer> fLocalPlayer;
+  std::unordered_map<i64, Uuid> fPlayerIdMap;
+  std::unordered_map<std::string, Uuid> fPlayerUuidMap;
 
   struct RootVehicle {
     Uuid fUid;

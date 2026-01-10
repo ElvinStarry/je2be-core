@@ -159,7 +159,7 @@ public:
     }
 
     if (auto playerData = Player(db, ctx, opt.fLocalPlayer.get()); playerData) {
-      ctx.setLocalPlayerIds(playerData->fEntityIdBedrock, playerData->fEntityIdJava);
+      ctx.addPlayerMapping(playerData->fEntityIdBedrock, playerData->fEntityIdJava);
       if (playerData->fShoulderEntityLeft) {
         ctx.setShoulderEntityLeft(*playerData->fShoulderEntityLeft);
       }

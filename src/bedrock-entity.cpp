@@ -265,7 +265,7 @@ public:
   static void Allay(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     if (auto ownerNew = b.int64(u8"OwnerNew"); ownerNew) {
       Uuid uuid;
-      if (auto mapped = ctx.mapLocalPlayerId(*ownerNew); mapped) {
+      if (auto mapped = ctx.mapPlayerId(*ownerNew); mapped) {
         uuid = *mapped;
       } else {
         uuid = Uuid::GenWithI64Seed(*ownerNew);
@@ -433,6 +433,7 @@ public:
     auto variantB = b.int32(u8"Variant", 8);
     Cat::Type catType = Cat::CatTypeFromBedrockVariant(variantB);
     j[u8"variant"] = String(u8"minecraft:" + Cat::JavaVariantFromCatType(catType));
+    Owner(b, j, ctx, dataVersion);
   }
 
   static void ChestMinecart(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
@@ -688,7 +689,7 @@ public:
           continue;
         }
         Uuid uuidJ;
-        if (auto mapped = ctx.mapLocalPlayerId(*uuidB); mapped) {
+        if (auto mapped = ctx.mapPlayerId(*uuidB); mapped) {
           uuidJ = *mapped;
         } else {
           uuidJ = Uuid::GenWithI64Seed(*uuidB);
@@ -813,7 +814,7 @@ public:
     }
     if (auto ownerIdB = b.int64(u8"OwnerID"); ownerIdB && *ownerIdB != -1) {
       Uuid uuid;
-      if (auto mapped = ctx.mapLocalPlayerId(*ownerIdB); mapped) {
+      if (auto mapped = ctx.mapPlayerId(*ownerIdB); mapped) {
         uuid = *mapped;
       } else {
         uuid = Uuid::GenWithI64Seed(*ownerIdB);
@@ -1697,6 +1698,21 @@ public:
   }
 
   static void Owner(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    if (auto ownerNew = b.int64(u8"OwnerNew"); ownerNew && *ownerNew != -1) {
+      if (auto mapped = ctx.mapPlayerId(*ownerNew); mapped) {
+        j[u8"Owner"] = mapped->toIntArrayTag();
+        return;
+      }
+    }
+
+    if (auto ownerUuid = b.string(u8"OwnerUUID"); ownerUuid) {
+      std::string uuidStr(ownerUuid->begin(), ownerUuid->end());
+      if (auto mapped = ctx.mapPlayerUuid(uuidStr); mapped) {
+        j[u8"Owner"] = mapped->toIntArrayTag();
+        return;
+      }
+    }
+
     auto ownerNew = b.int64(u8"OwnerNew");
     if (!ownerNew) {
       return;
@@ -1704,12 +1720,8 @@ public:
     if (ownerNew == -1) {
       return;
     }
-    Uuid uuid;
-    if (auto mapped = ctx.mapLocalPlayerId(*ownerNew); mapped) {
-      uuid = *mapped;
-    } else {
-      uuid = Uuid::GenWithI64Seed(*ownerNew);
-    }
+    // Fallback: Generate UUID from ID if not mapped
+    Uuid uuid = Uuid::GenWithI64Seed(*ownerNew);
     j[u8"Owner"] = uuid.toIntArrayTag();
   }
 
@@ -2175,7 +2187,7 @@ public:
         continue;
       }
       Uuid passengerUid;
-      if (auto localPlayer = ctx.mapLocalPlayerId(*id); localPlayer) {
+      if (auto localPlayer = ctx.mapPlayerId(*id); localPlayer) {
         passengerUid = *localPlayer;
         st = PassengerStatus::ContainsLocalPlayer;
       } else {

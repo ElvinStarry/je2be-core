@@ -269,6 +269,17 @@ public:
 
     fs::path temp = opt.getTempDirectory();
     out.reset(new Context(encoding, temp, mapInfo, structureInfo, gameTick, gameMode, accum.fLodestones));
+
+    // Populate player mappings from Options
+    for (auto const &kv : opt.fPlayerMapping) {
+      out->fPlayerUuidMap[kv.first] = kv.second;
+      try {
+        out->fPlayerIdMap[std::stoll(kv.first)] = kv.second;
+      } catch (...) {
+        // Ignore non-numeric keys
+      }
+    }
+
     return Status::Ok();
   }
 };
@@ -335,7 +346,8 @@ void Context::structures(mcfile::Dimension d, Pos2i chunk, std::vector<Structure
 
 std::shared_ptr<Context> Context::make() const {
   auto ret = std::shared_ptr<Context>(new Context(fEncoding, fTempDirectory, fMapInfo, fStructureInfo, fGameTick, fGameMode, fLodestones));
-  ret->fLocalPlayer = fLocalPlayer;
+  ret->fPlayerIdMap = fPlayerIdMap;
+  ret->fPlayerUuidMap = fPlayerUuidMap;
   if (fRootVehicle) {
     ret->fRootVehicle = *fRootVehicle;
   }
@@ -344,27 +356,38 @@ std::shared_ptr<Context> Context::make() const {
   return ret;
 }
 
-void Context::setLocalPlayerIds(i64 entityIdB, Uuid const &entityIdJ) {
-  LocalPlayer lp;
-  lp.fBedrockId = entityIdB;
-  lp.fJavaId = entityIdJ;
-  fLocalPlayer = lp;
+void Context::addPlayerMapping(i64 entityIdB, Uuid const &entityIdJ) {
+  fPlayerIdMap[entityIdB] = entityIdJ;
 }
 
-std::optional<Uuid> Context::mapLocalPlayerId(i64 entityIdB) const {
-  if (fLocalPlayer && fLocalPlayer->fBedrockId == entityIdB) {
-    return fLocalPlayer->fJavaId;
-  } else {
-    return std::nullopt;
+std::optional<Uuid> Context::mapPlayerId(i64 entityIdB) const {
+  auto it = fPlayerIdMap.find(entityIdB);
+  if (it != fPlayerIdMap.end()) {
+    return it->second;
   }
+  return std::nullopt;
+}
+
+std::optional<Uuid> Context::mapPlayerUuid(std::string const &uuidStr) const {
+  auto it = fPlayerUuidMap.find(uuidStr);
+  if (it != fPlayerUuidMap.end()) {
+    return it->second;
+  }
+  return std::nullopt;
 }
 
 bool Context::isLocalPlayerId(Uuid const &uuid) const {
-  if (fLocalPlayer) {
-    return UuidPred{}(uuid, fLocalPlayer->fJavaId);
-  } else {
-    return false;
+  for (auto const &kv : fPlayerIdMap) {
+    if (kv.second == uuid) {
+      return true;
+    }
   }
+  for (auto const &kv : fPlayerUuidMap) {
+    if (kv.second == uuid) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void Context::setRootVehicle(Uuid const &vehicleUid) {

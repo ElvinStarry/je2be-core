@@ -189,7 +189,7 @@ public:
   static void Allay(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     if (auto ownerNew = b.int64(u8"OwnerNew"); ownerNew) {
       Uuid uuid;
-      if (auto mapped = ctx.mapLocalPlayerId(*ownerNew); mapped) {
+      if (auto mapped = ctx.mapPlayerId(*ownerNew); mapped) {
         uuid = *mapped;
       } else {
         uuid = Uuid::GenWithI64Seed(*ownerNew);
@@ -493,7 +493,7 @@ public:
           continue;
         }
         Uuid uuidJ;
-        if (auto mapped = ctx.mapLocalPlayerId(*uuidB); mapped) {
+        if (auto mapped = ctx.mapPlayerId(*uuidB); mapped) {
           uuidJ = *mapped;
         } else {
           uuidJ = Uuid::GenWithI64Seed(*uuidB);
@@ -1232,7 +1232,7 @@ public:
       return;
     }
     Uuid uuid;
-    if (auto mapped = ctx.mapLocalPlayerId(*ownerNew); mapped) {
+    if (auto mapped = ctx.mapPlayerId(*ownerNew); mapped) {
       uuid = *mapped;
     } else {
       uuid = Uuid::GenWithI64Seed(*ownerNew);
@@ -1628,7 +1628,7 @@ public:
         continue;
       }
       Uuid passengerUid;
-      if (auto localPlayer = ctx.mapLocalPlayerId(*id); localPlayer) {
+      if (auto localPlayer = ctx.mapPlayerId(*id); localPlayer) {
         passengerUid = *localPlayer;
         st = PassengerStatus::ContainsLocalPlayer;
       } else {

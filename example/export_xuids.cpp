@@ -49,36 +49,16 @@ int main(int argc, char *argv[]) {
   for (it->SeekToFirst(); it->Valid(); it->Next()) {
     std::string keyStr = it->key().ToString();
 
-    // Filter: Only print if key looks like text
-    bool isText = true;
-    if (keyStr.empty())
-      continue;
-
-    // Chunk keys usually start with numeric bytes or are fixed length.
-    // Readable keys in Bedrock: "player_...", "~local_player", "autonomous_entity", "scoreboard", etc.
-    // Let's print anything that starts with a printable char and contains mostly printable chars.
-
-    if (!isprint((unsigned char)keyStr[0])) {
-      // Binary key (chunk data, etc.) -> Skip
-      continue;
-    }
-
-    // Double check the rest of the key
-    for (char c : keyStr) {
-      if (!isprint((unsigned char)c)) {
-        isText = false;
-        break;
-      }
-    }
-
-    if (isText) {
-      std::cout << "KEY: " << keyStr << std::endl;
-      printedCount++;
-
-      // Check if it looks like a player key
-      if (keyStr.find("player") != std::string::npos) {
-        std::cout << "!!! POTENTIAL PLAYER KEY: " << keyStr << std::endl;
-      }
+    if (keyStr.rfind("player_", 0) == 0) {
+      // It is a player key
+      std::string xuid = keyStr.substr(7); // remove "player_"
+      std::cout << "FOUND_KEY: " << keyStr << " -> XUID: " << xuid << std::endl;
+      foundCount++;
+    } else if (keyStr.rfind("player_server_", 0) == 0) {
+      // Server-auth player key
+      std::string xuid = keyStr.substr(14); // remove "player_server_"
+      std::cout << "FOUND_KEY: " << keyStr << " -> XUID: " << xuid << std::endl;
+      foundCount++;
     }
   }
   std::cout << "Total readable keys found: " << printedCount << std::endl;

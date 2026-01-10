@@ -1,7 +1,6 @@
 #include <je2be/bedrock/converter.hpp>
 #include <minecraft-file.hpp>
 
-
 #include <je2be/bedrock/options.hpp>
 #include <je2be/bedrock/progress.hpp>
 #include <je2be/nbt.hpp>
@@ -479,7 +478,7 @@ private:
             }
 
             try {
-              ctx.setLocalPlayerIds(std::stoll(xuid), targetUuid);
+              ctx.addPlayerMapping(std::stoll(xuid), targetUuid);
             } catch (...) {
             }
           }

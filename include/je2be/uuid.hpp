@@ -23,6 +23,10 @@ struct Uuid {
     return *this;
   }
 
+  bool operator==(Uuid const &other) const {
+    return std::equal(std::begin(fData), std::end(fData), std::begin(other.fData));
+  }
+
   static Uuid Gen() {
     std::random_device r;
     return GenWithSeed(r());
