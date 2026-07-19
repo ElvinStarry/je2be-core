@@ -15,6 +15,7 @@ class Context::Impl {
     std::map<mcfile::Dimension, std::unordered_map<Pos2i, ChunksInRegion, Pos2iHasher>> fRegions;
     std::map<mcfile::Dimension, std::vector<StructurePiece>> fStructurePieces;
     std::unordered_map<i32, std::pair<mcfile::Dimension, Pos3i>> fLodestones;
+    std::map<std::string, CompoundTagPtr> fPlayers;
     int fNumChunks = 0;
 
     Options fOpt;
@@ -55,6 +56,9 @@ class Context::Impl {
       for (auto const &it : fLodestones) {
         out.fLodestones[it.first] = it.second;
       }
+      for (auto const &it : fPlayers) {
+        out.fPlayers[it.first] = it.second;
+      }
     }
 
     void accept(std::string const &key, std::string const &value) {
@@ -94,7 +98,11 @@ class Context::Impl {
         }
         }
       } else {
-        if (parsed.fUnTagged.starts_with("map_")) {
+        if (parsed.fUnTagged == "~local_player" || parsed.fUnTagged.starts_with("player_")) {
+          if (auto player = CompoundTag::Read(value, fEncoding); player && player->int64(u8"UniqueID")) {
+            fPlayers[parsed.fUnTagged] = player;
+          }
+        } else if (parsed.fUnTagged.starts_with("map_")) {
           i64 mapId;
           auto mapInfo = MapInfo::Parse(value, mapId, fEncoding);
           if (!mapInfo) {
@@ -150,6 +158,7 @@ public:
                      i64 gameTick,
                      GameMode gameMode,
                      unsigned int concurrency,
+                     std::vector<PlayerData> &players,
                      std::unique_ptr<Context> &out) {
     using namespace std;
     using namespace leveldb;
@@ -210,6 +219,11 @@ public:
     }
 
     totalChunks = accum.fNumChunks;
+
+    players.clear();
+    for (auto const &[key, entity] : accum.fPlayers) {
+      players.push_back({key, entity});
+    }
 
     auto structureInfo = make_shared<StructureInfo>();
     for (auto const &[dim, pieces] : accum.fStructurePieces) {
@@ -281,8 +295,9 @@ Status Context::Init(std::filesystem::path const &dbname,
                      i64 gameTick,
                      GameMode gameMode,
                      unsigned int concurrency,
+                     std::vector<PlayerData> &players,
                      std::unique_ptr<Context> &out) {
-  return Impl::Init(dbname, opt, encoding, regions, totalChunks, gameTick, gameMode, concurrency, out);
+  return Impl::Init(dbname, opt, encoding, regions, totalChunks, gameTick, gameMode, concurrency, players, out);
 }
 
 void Context::markMapUuidAsUsed(i64 uuid) {
@@ -299,14 +314,39 @@ void Context::mergeInto(Context &other) const {
   for (auto const &it : fLeashKnots) {
     other.fLeashKnots[it.first] = it.second;
   }
-  if (!other.fRootVehicle && fRootVehicle) {
-    other.fRootVehicle = fRootVehicle;
+  for (auto const &it : fVehicleEntities) {
+    auto found = other.fVehicleEntities.find(it.first);
+    if (found == other.fVehicleEntities.end()) {
+      other.fVehicleEntities[it.first] = it.second;
+    } else {
+      for (auto const &[index, passenger] : it.second.fPassengers) {
+        found->second.fPassengers[index] = passenger;
+      }
+    }
   }
-  if (!other.fShoulderEntityLeft && fShoulderEntityLeft) {
-    other.fShoulderEntityLeft = fShoulderEntityLeft;
+  for (auto const &it : fEntities) {
+    other.fEntities[it.first] = it.second;
   }
-  if (!other.fShoulderEntityRight && fShoulderEntityRight) {
-    other.fShoulderEntityRight = fShoulderEntityRight;
+  for (auto const &[playerId, rootVehicle] : fRootVehicles) {
+    auto found = other.fRootVehicles.find(playerId);
+    if (found == other.fRootVehicles.end() || (!found->second.fVehicle && rootVehicle.fVehicle)) {
+      other.fRootVehicles[playerId] = rootVehicle;
+    }
+  }
+  for (auto const &[playerId, shoulder] : fShoulderEntities) {
+    auto &dest = other.fShoulderEntities[playerId];
+    if (!dest.fLeftId && shoulder.fLeftId) {
+      dest.fLeftId = shoulder.fLeftId;
+    }
+    if (!dest.fRightId && shoulder.fRightId) {
+      dest.fRightId = shoulder.fRightId;
+    }
+    if (!dest.fLeft && shoulder.fLeft) {
+      dest.fLeft = shoulder.fLeft;
+    }
+    if (!dest.fRight && shoulder.fRight) {
+      dest.fRight = shoulder.fRight;
+    }
   }
   for (auto const &it : fPoiBlocks) {
     mcfile::Dimension dim = it.first;
@@ -335,13 +375,15 @@ void Context::structures(mcfile::Dimension d, Pos2i chunk, std::vector<Structure
 
 std::shared_ptr<Context> Context::make() const {
   auto ret = std::shared_ptr<Context>(new Context(fEncoding, fTempDirectory, fMapInfo, fStructureInfo, fGameTick, fGameMode, fLodestones));
+  ret->fPlayerIds = fPlayerIds;
   ret->fLocalPlayer = fLocalPlayer;
-  if (fRootVehicle) {
-    ret->fRootVehicle = *fRootVehicle;
-  }
-  ret->fShoulderEntityLeftId = fShoulderEntityLeftId;
-  ret->fShoulderEntityRightId = fShoulderEntityRightId;
+  ret->fRootVehicles = fRootVehicles;
+  ret->fShoulderEntities = fShoulderEntities;
   return ret;
+}
+
+void Context::addPlayerMapping(i64 entityIdB, Uuid const &entityIdJ) {
+  fPlayerIds[entityIdB] = entityIdJ;
 }
 
 void Context::setLocalPlayerIds(i64 entityIdB, Uuid const &entityIdJ) {
@@ -349,14 +391,38 @@ void Context::setLocalPlayerIds(i64 entityIdB, Uuid const &entityIdJ) {
   lp.fBedrockId = entityIdB;
   lp.fJavaId = entityIdJ;
   fLocalPlayer = lp;
+  addPlayerMapping(entityIdB, entityIdJ);
 }
 
-std::optional<Uuid> Context::mapLocalPlayerId(i64 entityIdB) const {
-  if (fLocalPlayer && fLocalPlayer->fBedrockId == entityIdB) {
-    return fLocalPlayer->fJavaId;
-  } else {
+std::optional<Uuid> Context::mapPlayerId(i64 entityIdB) const {
+  auto found = fPlayerIds.find(entityIdB);
+  if (found == fPlayerIds.end()) {
     return std::nullopt;
   }
+  return found->second;
+}
+
+std::optional<i64> Context::localPlayerId() const {
+  if (fLocalPlayer) {
+    return fLocalPlayer->fBedrockId;
+  }
+  return std::nullopt;
+}
+
+Uuid Context::mapEntityId(i64 entityIdB) const {
+  if (auto mapped = mapPlayerId(entityIdB); mapped) {
+    return *mapped;
+  }
+  return Uuid::GenWithI64Seed(entityIdB);
+}
+
+bool Context::isPlayerId(Uuid const &uuid) const {
+  for (auto const &[_, playerUuid] : fPlayerIds) {
+    if (UuidPred{}(uuid, playerUuid)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool Context::isLocalPlayerId(Uuid const &uuid) const {
@@ -368,34 +434,67 @@ bool Context::isLocalPlayerId(Uuid const &uuid) const {
 }
 
 void Context::setRootVehicle(Uuid const &vehicleUid) {
-  RootVehicle rv;
-  rv.fUid = vehicleUid;
-  fRootVehicle = rv;
+  if (fLocalPlayer) {
+    setRootVehicleForPlayer(fLocalPlayer->fBedrockId, vehicleUid);
+  }
 }
 
-void Context::setRootVehicleEntity(CompoundTagPtr const &vehicleEntity) {
-  assert(fRootVehicle);
-  if (!fRootVehicle) {
+void Context::setRootVehicleForPlayer(i64 playerIdB, Uuid const &vehicleUid) {
+  if (fPlayerIds.find(playerIdB) == fPlayerIds.end()) {
     return;
   }
-  fRootVehicle->fVehicle = vehicleEntity;
+  fRootVehicles[playerIdB] = {.fAttach = vehicleUid, .fRoot = vehicleUid};
+}
+
+void Context::setRootVehicleEntity(Uuid const &vehicleUid, CompoundTagPtr const &vehicleEntity) {
+  for (auto &[_, rootVehicle] : fRootVehicles) {
+    if (UuidPred{}(vehicleUid, rootVehicle.fRoot)) {
+      rootVehicle.fVehicle = vehicleEntity;
+    }
+  }
+}
+
+void Context::promoteRootVehicles() {
+  for (auto &[_, rootVehicle] : fRootVehicles) {
+    std::unordered_set<Uuid, UuidHasher, UuidPred> visited;
+    while (visited.insert(rootVehicle.fRoot).second) {
+      std::optional<Uuid> parent;
+      for (auto const &[vehicleId, vehicle] : fVehicleEntities) {
+        for (auto const &[_, passengerId] : vehicle.fPassengers) {
+          if (UuidPred{}(passengerId, rootVehicle.fRoot)) {
+            parent = vehicleId;
+            break;
+          }
+        }
+        if (parent) {
+          break;
+        }
+      }
+      if (!parent) {
+        break;
+      }
+      rootVehicle.fRoot = *parent;
+    }
+  }
 }
 
 bool Context::isRootVehicle(Uuid const &uuid) const {
-  if (fRootVehicle) {
-    return UuidPred{}(uuid, fRootVehicle->fUid);
-  } else {
-    return false;
+  for (auto const &[_, rootVehicle] : fRootVehicles) {
+    if (UuidPred{}(uuid, rootVehicle.fRoot)) {
+      return true;
+    }
   }
+  return false;
 }
 
-std::optional<std::pair<Uuid, CompoundTagPtr>> Context::drainRootVehicle() {
-  if (!fRootVehicle) {
+std::optional<std::pair<Uuid, CompoundTagPtr>> Context::drainRootVehicle(i64 playerIdB) {
+  auto found = fRootVehicles.find(playerIdB);
+  if (found == fRootVehicles.end()) {
     return std::nullopt;
   }
-  auto uid = fRootVehicle->fUid;
-  auto vehicle = fRootVehicle->fVehicle;
-  fRootVehicle = std::nullopt;
+  auto uid = found->second.fAttach;
+  auto vehicle = found->second.fVehicle;
+  fRootVehicles.erase(found);
   if (vehicle) {
     return std::make_pair(uid, vehicle);
   }
@@ -403,28 +502,47 @@ std::optional<std::pair<Uuid, CompoundTagPtr>> Context::drainRootVehicle() {
 }
 
 void Context::setShoulderEntityLeft(i64 uid) {
-  fShoulderEntityLeftId = uid;
-}
-
-void Context::setShoulderEntityRight(i64 uid) {
-  fShoulderEntityRightId = uid;
-}
-
-bool Context::setShoulderEntityIfItIs(i64 uid, CompoundTagPtr entityB) {
-  if (fShoulderEntityLeftId == uid) {
-    fShoulderEntityLeft = entityB;
-    return true;
-  } else if (fShoulderEntityRightId == uid) {
-    fShoulderEntityRight = entityB;
-    return true;
-  } else {
-    return false;
+  if (fLocalPlayer) {
+    setShoulderEntityLeft(fLocalPlayer->fBedrockId, uid);
   }
 }
 
-void Context::drainShoulderEntities(CompoundTagPtr &left, CompoundTagPtr &right) {
-  fShoulderEntityLeft.swap(left);
-  fShoulderEntityRight.swap(right);
+void Context::setShoulderEntityRight(i64 uid) {
+  if (fLocalPlayer) {
+    setShoulderEntityRight(fLocalPlayer->fBedrockId, uid);
+  }
+}
+
+void Context::setShoulderEntityLeft(i64 playerIdB, i64 uid) {
+  fShoulderEntities[playerIdB].fLeftId = uid;
+}
+
+void Context::setShoulderEntityRight(i64 playerIdB, i64 uid) {
+  fShoulderEntities[playerIdB].fRightId = uid;
+}
+
+bool Context::setShoulderEntityIfItIs(i64 uid, CompoundTagPtr entityB) {
+  for (auto &[_, shoulder] : fShoulderEntities) {
+    if (shoulder.fLeftId == uid) {
+      shoulder.fLeft = entityB;
+      return true;
+    }
+    if (shoulder.fRightId == uid) {
+      shoulder.fRight = entityB;
+      return true;
+    }
+  }
+  return false;
+}
+
+void Context::drainShoulderEntities(i64 playerIdB, CompoundTagPtr &left, CompoundTagPtr &right) {
+  auto found = fShoulderEntities.find(playerIdB);
+  if (found == fShoulderEntities.end()) {
+    return;
+  }
+  found->second.fLeft.swap(left);
+  found->second.fRight.swap(right);
+  fShoulderEntities.erase(found);
 }
 
 void Context::addToPoiIfItIs(mcfile::Dimension dim, Pos3i const &pos, mcfile::je::Block const &block) {

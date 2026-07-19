@@ -104,6 +104,7 @@ public:
       chunksInRegion[{rx, rz}].insert(it.second.fChunk);
     }
 
+    ctx->promoteRootVehicles();
     unordered_map<Pos2i, unordered_map<Uuid, std::map<size_t, Uuid>, UuidHasher, UuidPred>, Pos2iHasher> vehicleEntities;
     for (auto const &it : ctx->fVehicleEntities) {
       if (!it.second.fPassengers.empty()) {
@@ -287,7 +288,7 @@ public:
       // Remove vehicle from entities if it is a root vehicle
       if (ctx.isRootVehicle(vehicleId)) {
         entities->fValue.erase(remove(entities->fValue.begin(), entities->fValue.end(), vehicle));
-        ctx.setRootVehicleEntity(vehicle);
+        ctx.setRootVehicleEntity(vehicleId, vehicle);
       }
     }
     return Status::Ok();

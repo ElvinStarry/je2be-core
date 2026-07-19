@@ -45,4 +45,5 @@ static fs::path ProjectRootDir() {
 #include "system.test.hpp"
 #include "b2j2b.test.hpp"
 #include "bedrock-legacy-block.test.hpp"
+#include "bedrock-java-player.test.hpp"
 #include "parallel.test.hpp"

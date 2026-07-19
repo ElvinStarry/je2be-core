@@ -218,6 +218,7 @@ set(je2be_src_files
   src/bedrock-converter.cpp
   src/bedrock-entity-before-components-introduced.hpp
   src/bedrock-entity.cpp
+  src/bedrock-java-player.cpp
   src/bedrock-item-before-components-introduced.hpp
   src/bedrock-item.cpp
   src/bedrock-region.cpp
@@ -232,6 +233,7 @@ set(je2be_src_files
   src/bedrock/_context.hpp
   src/bedrock/_entity.hpp
   src/bedrock/_item.hpp
+  src/bedrock/_java-player.hpp
   src/bedrock/_legacy-block.hpp
   src/bedrock/_level-data.hpp
   src/bedrock/_map-info.hpp
@@ -438,6 +440,7 @@ set(test_files
   test/system.test.hpp
   test/b2j2b.test.hpp
   test/bedrock-legacy-block.test.hpp
+  test/bedrock-java-player.test.hpp
   test/parallel.test.hpp)
 
 if (NOT "${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
@@ -492,6 +495,49 @@ if (nlohmann_json_ADDED)
   target_include_directories(nlohmann_json INTERFACE ${nlohmann_json_SOURCE_DIR}/include)
 endif()
 
+set(je2be_with_curl OFF)
+if (NOT EMSCRIPTEN AND NOT ANDROID)
+  if (WIN32)
+    set(je2be_curl_tls_options "CURL_USE_SCHANNEL ON")
+  elseif(APPLE)
+    set(je2be_curl_tls_options "CURL_USE_SECTRANSP ON")
+  else()
+    set(je2be_curl_tls_options "CURL_USE_OPENSSL ON")
+  endif()
+
+  CPMAddPackage(
+    NAME curl
+    GITHUB_REPOSITORY curl/curl
+    GIT_TAG curl-8_14_1
+    OPTIONS "BUILD_CURL_EXE OFF"
+            "BUILD_EXAMPLES OFF"
+            "BUILD_LIBCURL_DOCS OFF"
+            "BUILD_MISC_DOCS OFF"
+            "ENABLE_CURL_MANUAL OFF"
+            "BUILD_TESTING OFF"
+            "PICKY_COMPILER OFF"
+            "BUILD_SHARED_LIBS OFF"
+            "BUILD_STATIC_LIBS ON"
+            "CURL_DISABLE_INSTALL ON"
+            "HTTP_ONLY ON"
+            "CURL_ZLIB OFF"
+            "CURL_BROTLI OFF"
+            "CURL_ZSTD OFF"
+            "CURL_USE_LIBPSL OFF"
+            "CURL_USE_LIBSSH2 OFF"
+            "CURL_USE_GSSAPI OFF"
+            "USE_LIBIDN2 OFF"
+            "USE_NGHTTP2 OFF"
+            "USE_NGTCP2 OFF"
+            "USE_QUICHE OFF"
+            "USE_MSH3 OFF"
+            "ENABLE_ARES OFF"
+            "CURL_DISABLE_ALTSVC ON"
+            "CURL_DISABLE_HSTS ON"
+            ${je2be_curl_tls_options})
+  set(je2be_with_curl ON)
+endif()
+
 CPMAddPackage(
   NAME minizip
   GITHUB_REPOSITORY zlib-ng/minizip-ng
@@ -544,6 +590,10 @@ target_include_directories(je2be PUBLIC
   ${je2be_include_directories})
 target_include_directories(je2be PRIVATE ./src ${libdeflate_SOURCE_DIR} ${libminecraft-file_SOURCE_DIR}/include ${defer_SOURCE_DIR}/include)
 target_link_libraries(je2be INTERFACE ${je2be_link_libraries})
+if (je2be_with_curl)
+  target_link_libraries(je2be PRIVATE CURL::libcurl)
+  target_compile_definitions(je2be PRIVATE JE2BE_WITH_CURL=1)
+endif()
 target_link_directories(je2be INTERFACE ${je2be_link_directories})
 target_compile_definitions(je2be PUBLIC -DXXH_NAMESPACE=LZ4_)
 

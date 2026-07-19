@@ -1040,12 +1040,7 @@ public:
           if (!v) {
             continue;
           }
-          Uuid uuid;
-          if (auto mapped = ctx.mapLocalPlayerId(v->fValue); mapped) {
-            uuid = *mapped;
-          } else {
-            uuid = Uuid::GenWithI64Seed(v->fValue);
-          }
+          Uuid uuid = ctx.mapEntityId(v->fValue);
           rewardedPlayersJ->push_back(uuid.toIntArrayTag());
         }
         if (!rewardedPlayersJ->empty()) {
@@ -1211,12 +1206,8 @@ public:
     return ret;
   }
 
-  static Uuid ConvertEntityId(long bedrock, Context const &ctx) {
-    if (auto mapped = ctx.mapLocalPlayerId(bedrock); mapped) {
-      return *mapped;
-    } else {
-      return Uuid::GenWithI64Seed(bedrock);
-    }
+  static Uuid ConvertEntityId(i64 bedrock, Context const &ctx) {
+    return ctx.mapEntityId(bedrock);
   }
 
   static ListTagPtr ConvertUuidList(ListTag const &bedrock, Context const &ctx) {

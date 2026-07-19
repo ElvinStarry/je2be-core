@@ -154,7 +154,7 @@ public:
     j[u8"GameType"] = Int(JavaFromGameMode(ctx.fGameMode));
     j[u8"initialized"] = Bool(true);
 
-    if (auto dragonFight = DragonFight(db, ctx.fEncoding); dragonFight) {
+    if (auto dragonFight = DragonFight(db, ctx); dragonFight) {
       j[u8"DragonFight"] = dragonFight;
     }
 
@@ -330,12 +330,12 @@ public:
     return Entity::LocalPlayer(*tag, ctx, uuid, kJavaDataVersion);
   }
 
-  static CompoundTagPtr DragonFight(mcfile::be::DbInterface &db, mcfile::Encoding encoding) {
+  static CompoundTagPtr DragonFight(mcfile::be::DbInterface &db, Context const &ctx) {
     auto str = db.get(mcfile::be::DbKey::TheEnd());
     if (!str) {
       return nullptr;
     }
-    auto tag = CompoundTag::Read(*str, encoding);
+    auto tag = CompoundTag::Read(*str, ctx.fEncoding);
     if (!tag) {
       return nullptr;
     }
@@ -357,7 +357,7 @@ public:
     }
     CopyBoolValues(*fightB, *fightJ, {{u8"DragonKilled"}, {u8"PreviouslyKilled"}});
     if (auto dragonUidB = fightB->int64(u8"DragonUUID"); dragonUidB) {
-      auto dragonUidJ = Uuid::GenWithI64Seed(*dragonUidB);
+      auto dragonUidJ = ctx.mapEntityId(*dragonUidB);
       fightJ->set(u8"Dragon", dragonUidJ.toIntArrayTag());
     }
     if (auto gatewaysB = fightB->listTag(u8"Gateways"); gatewaysB) {

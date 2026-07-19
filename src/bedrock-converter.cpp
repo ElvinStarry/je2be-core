@@ -8,6 +8,7 @@
 #include "_queue2d.hpp"
 #include "_walk.hpp"
 #include "bedrock/_context.hpp"
+#include "bedrock/_java-player.hpp"
 #include "bedrock/_level-data.hpp"
 #include "bedrock/_world.hpp"
 #include "db/_readonly-db.hpp"
@@ -19,6 +20,7 @@
 #include <sparse.hpp>
 
 #include <atomic>
+#include <exception>
 #include <latch>
 #include <thread>
 
@@ -28,16 +30,24 @@ namespace fs = std::filesystem;
 namespace je2be::bedrock {
 
 class Converter::Impl {
+  struct ResolvedPlayer {
+    Context::PlayerData fSource;
+    i64 fBedrockId;
+    Uuid fJavaId;
+  };
+
+  struct ConvertedPlayer {
+    i64 fBedrockId;
+    Uuid fJavaId;
+    CompoundTagPtr fEntity;
+  };
+
 public:
   static Status Run(std::filesystem::path const &input, std::filesystem::path const &output, Options const &options, unsigned concurrency, Progress *progress = nullptr) {
     using namespace std;
     using namespace leveldb;
     using namespace mcfile;
     namespace fs = std::filesystem;
-
-    if (!PrepareOutputDirectory(output)) {
-      return JE2BE_ERROR;
-    }
 
     CompoundTagPtr dat;
     if (!LevelData::Read(input / "level.dat", dat)) {
@@ -49,6 +59,7 @@ public:
 
     u64 total = 0;
     map<Dimension, vector<pair<Pos2i, Context::ChunksInRegion>>> regions;
+    vector<Context::PlayerData> players;
     i64 gameTick = dat->int64(u8"currentTick", 0);
     i32 gameTypeB = dat->int32(u8"GameType", 0);
     GameMode gameMode = GameMode::Survival;
@@ -56,8 +67,18 @@ public:
       gameMode = *t;
     }
     unique_ptr<Context> bin;
-    if (auto st = Context::Init(input / "db", options, mcfile::Encoding::LittleEndian, regions, total, gameTick, gameMode, concurrency, bin); !st.ok()) {
+    if (auto st = Context::Init(input / "db", options, mcfile::Encoding::LittleEndian, regions, total, gameTick, gameMode, concurrency, players, bin); !st.ok()) {
       return JE2BE_ERROR_PUSH(st);
+    }
+
+    Options effectiveOptions = options;
+    vector<ResolvedPlayer> resolvedPlayers;
+    if (auto st = ResolvePlayers(players, options, *bin, effectiveOptions, resolvedPlayers); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
+    }
+
+    if (!PrepareOutputDirectory(output)) {
+      return JE2BE_ERROR;
     }
 
     unique_ptr<ReadonlyDb> db;
@@ -67,9 +88,29 @@ public:
     if (!db) {
       return JE2BE_ERROR;
     }
-    auto levelDat = LevelData::Import(*dat, *db, options, *bin);
+    auto levelDat = LevelData::Import(*dat, *db, effectiveOptions, *bin);
     if (!levelDat) {
       return JE2BE_ERROR;
+    }
+
+    vector<ConvertedPlayer> convertedPlayers;
+    optional<Uuid> resolvedLocalPlayerUuid;
+    for (auto const &resolved : resolvedPlayers) {
+      if (resolved.fSource.isLocal()) {
+        resolvedLocalPlayerUuid = resolved.fJavaId;
+        continue;
+      }
+      auto player = Entity::LocalPlayer(*resolved.fSource.fEntity, *bin, &resolved.fJavaId, kJavaDataVersion);
+      if (!player) {
+        continue;
+      }
+      if (player->fShoulderEntityLeft) {
+        bin->setShoulderEntityLeft(resolved.fBedrockId, *player->fShoulderEntityLeft);
+      }
+      if (player->fShoulderEntityRight) {
+        bin->setShoulderEntityRight(resolved.fBedrockId, *player->fShoulderEntityRight);
+      }
+      convertedPlayers.push_back({resolved.fBedrockId, resolved.fJavaId, player->fEntity});
     }
 
     atomic<int> done = 0;
@@ -90,12 +131,12 @@ public:
 
     map<Dimension, fs::path> terrainTempDirs;
     for (Dimension d : {Dimension::Overworld, Dimension::Nether, Dimension::End}) {
-      if (!options.fDimensionFilter.empty()) {
-        if (options.fDimensionFilter.find(d) == options.fDimensionFilter.end()) {
+      if (!effectiveOptions.fDimensionFilter.empty()) {
+        if (effectiveOptions.fDimensionFilter.find(d) == effectiveOptions.fDimensionFilter.end()) {
           continue;
         }
       }
-      auto terrainTempDir = File::CreateTempDir(options.getTempDirectory());
+      auto terrainTempDir = File::CreateTempDir(effectiveOptions.getTempDirectory());
       if (!terrainTempDir) {
         return JE2BE_ERROR;
       }
@@ -119,46 +160,18 @@ public:
       Fs::DeleteAll(dir);
     }
 
-    if (auto rootVehicle = bin->drainRootVehicle(); rootVehicle) {
-      Uuid vehicleUuid = rootVehicle->first;
-      auto entity = rootVehicle->second;
-      if (auto data = levelDat->compoundTag(u8"Data"); data) {
-        if (auto player = data->compoundTag(u8"Player"); player) {
-          if (auto vehiclePos = props::GetPos3d(*entity, u8"Pos"); vehiclePos) {
-            if (auto playerPos = props::GetPos3d(*player, u8"Pos"); playerPos) {
-              auto vehicleId = entity->string(u8"id", u8"");
-              if (vehicleId == u8"minecraft:boat") {
-                playerPos->fY = vehiclePos->fY - 0.45;
-              } else if (vehicleId == u8"minecraft:minecart") {
-                if (entity->boolean(u8"OnGround", false)) {
-                  playerPos->fY = vehiclePos->fY - 0.35;
-                } else {
-                  playerPos->fY = vehiclePos->fY - 0.2875;
-                }
-              }
-              player->set(u8"Pos", playerPos->toListTag());
-            }
-          }
-          auto rootVehicleTag = Compound();
-          rootVehicleTag->set(u8"Entity", entity);
-          rootVehicleTag->set(u8"Attach", vehicleUuid.toIntArrayTag());
-          player->set(u8"RootVehicle", rootVehicleTag);
+    CompoundTagPtr localPlayer;
+    if (auto data = levelDat->compoundTag(u8"Data"); data) {
+      if (auto player = data->compoundTag(u8"Player"); player) {
+        if (auto localPlayerId = bin->localPlayerId(); localPlayerId) {
+          AttachPlayerState(*player, *localPlayerId, *bin);
         }
+        localPlayer = player;
       }
     }
 
-    if (auto data = levelDat->compoundTag(u8"Data"); data) {
-      if (auto player = data->compoundTag(u8"Player"); player) {
-        CompoundTagPtr shoulderEntityLeft;
-        CompoundTagPtr shoulderEntityRight;
-        bin->drainShoulderEntities(shoulderEntityLeft, shoulderEntityRight);
-        if (shoulderEntityLeft) {
-          player->set(u8"ShoulderEntityLeft", shoulderEntityLeft);
-        }
-        if (shoulderEntityRight) {
-          player->set(u8"ShoulderEntityRight", shoulderEntityRight);
-        }
-      }
+    for (auto &converted : convertedPlayers) {
+      AttachPlayerState(*converted.fEntity, converted.fBedrockId, *bin);
     }
 
     LevelData::UpdateDataPacksAndEnabledFeatures(*levelDat, *bin);
@@ -167,10 +180,167 @@ public:
       return JE2BE_ERROR;
     }
 
+    map<u8string, CompoundTagPtr> playerData;
+    for (auto const &player : convertedPlayers) {
+      playerData[player.fJavaId.toString()] = player.fEntity;
+    }
+    if (resolvedLocalPlayerUuid && localPlayer) {
+      playerData[resolvedLocalPlayerUuid->toString()] = localPlayer;
+    }
+
+    if (!playerData.empty()) {
+      auto playerDataDirectory = output / "playerdata";
+      error_code ec;
+      fs::create_directories(playerDataDirectory, ec);
+      if (ec) {
+        return JE2BE_ERROR_WHAT(ec.message());
+      }
+      for (auto const &[uuid, player] : playerData) {
+        auto path = playerDataDirectory / fs::path(uuid + u8".dat");
+        if (!LevelData::Write(*player, path)) {
+          return JE2BE_ERROR;
+        }
+      }
+    }
+
     return bin->postProcess(output, *db);
   }
 
 private:
+  static std::u8string PlayerNameCacheKey(std::u8string name) {
+    for (auto &ch : name) {
+      if (ch >= u8'A' && ch <= u8'Z') {
+        ch += u8'a' - u8'A';
+      }
+    }
+    return name;
+  }
+
+  static Status ResolvePlayers(std::vector<Context::PlayerData> const &players,
+                               Options const &options,
+                               Context &ctx,
+                               Options &effectiveOptions,
+                               std::vector<ResolvedPlayer> &resolvedPlayers) {
+    std::map<std::u8string, std::optional<Uuid>> cache;
+    std::map<i64, Uuid> mappings;
+    std::vector<ResolvedPlayer> markedPlayers;
+    for (auto const &player : players) {
+      auto bedrockId = player.fEntity->int64(u8"UniqueID");
+      if (!bedrockId) {
+        continue;
+      }
+      auto name = JavaPlayer::NameFromInventoryMarker(*player.fEntity);
+      if (!name) {
+        continue;
+      }
+      auto key = PlayerNameCacheKey(*name);
+      auto found = cache.find(key);
+      if (found == cache.end()) {
+        try {
+          found = cache.emplace(key, JavaPlayer::ResolveUuid(*name, options)).first;
+        } catch (std::exception const &e) {
+          std::string const javaName(reinterpret_cast<char const *>(name->data()), name->size());
+          return JE2BE_ERROR_WHAT("Failed to resolve Java UUID for JavaTag player '" + javaName + "': " + e.what());
+        } catch (...) {
+          std::string const javaName(reinterpret_cast<char const *>(name->data()), name->size());
+          return JE2BE_ERROR_WHAT("Failed to resolve Java UUID for JavaTag player '" + javaName + "'");
+        }
+      }
+      if (!found->second) {
+        std::string const javaName(reinterpret_cast<char const *>(name->data()), name->size());
+        return JE2BE_ERROR_WHAT("Failed to resolve Java UUID for JavaTag player '" + javaName + "'");
+      }
+      Uuid uuid = *found->second;
+      auto mapped = mappings.find(*bedrockId);
+      if (mapped != mappings.end() && !UuidPred{}(mapped->second, uuid)) {
+        return JE2BE_ERROR_WHAT("Conflicting Java UUIDs for Bedrock player UniqueID " + std::to_string(*bedrockId));
+      }
+      mappings[*bedrockId] = uuid;
+      markedPlayers.push_back({player, *bedrockId, uuid});
+    }
+
+    for (auto const &[bedrockId, javaId] : mappings) {
+      ctx.addPlayerMapping(bedrockId, javaId);
+    }
+
+    std::map<std::u8string, ResolvedPlayer> selectedPlayers;
+    for (auto const &player : markedPlayers) {
+      auto key = player.fJavaId.toString();
+      auto selected = selectedPlayers.find(key);
+      if (selected == selectedPlayers.end()) {
+        selectedPlayers.emplace(key, player);
+      } else if (selected->second.fBedrockId != player.fBedrockId) {
+        std::string const javaId(reinterpret_cast<char const *>(key.data()), key.size());
+        return JE2BE_ERROR_WHAT("Java UUID " + javaId + " is assigned to multiple Bedrock player UniqueIDs");
+      }
+    }
+
+    for (auto const &player : players) {
+      if (!player.isLocal()) {
+        continue;
+      }
+      auto bedrockId = player.fEntity->int64(u8"UniqueID");
+      if (!bedrockId) {
+        continue;
+      }
+      auto mapped = mappings.find(*bedrockId);
+      if (mapped != mappings.end()) {
+        effectiveOptions.fLocalPlayer = std::make_shared<Uuid const>(mapped->second);
+        selectedPlayers[mapped->second.toString()] = {player, *bedrockId, mapped->second};
+      } else if (options.fLocalPlayer) {
+        auto key = options.fLocalPlayer->toString();
+        auto selected = selectedPlayers.find(key);
+        if (selected != selectedPlayers.end() && selected->second.fBedrockId != *bedrockId) {
+          std::string const javaId(reinterpret_cast<char const *>(key.data()), key.size());
+          return JE2BE_ERROR_WHAT("Java UUID " + javaId + " is assigned to multiple Bedrock player UniqueIDs");
+        }
+        ctx.addPlayerMapping(*bedrockId, *options.fLocalPlayer);
+      }
+    }
+
+    resolvedPlayers.clear();
+    for (auto const &[_, player] : selectedPlayers) {
+      resolvedPlayers.push_back(player);
+    }
+    return Status::Ok();
+  }
+
+  static void AttachPlayerState(CompoundTag &player, i64 bedrockId, Context &ctx) {
+    if (auto rootVehicle = ctx.drainRootVehicle(bedrockId); rootVehicle) {
+      Uuid vehicleUuid = rootVehicle->first;
+      auto entity = rootVehicle->second;
+      if (auto vehiclePos = props::GetPos3d(*entity, u8"Pos"); vehiclePos) {
+        if (auto playerPos = props::GetPos3d(player, u8"Pos"); playerPos) {
+          auto vehicleId = entity->string(u8"id", u8"");
+          if (vehicleId == u8"minecraft:boat") {
+            playerPos->fY = vehiclePos->fY - 0.45;
+          } else if (vehicleId == u8"minecraft:minecart") {
+            if (entity->boolean(u8"OnGround", false)) {
+              playerPos->fY = vehiclePos->fY - 0.35;
+            } else {
+              playerPos->fY = vehiclePos->fY - 0.2875;
+            }
+          }
+          player.set(u8"Pos", playerPos->toListTag());
+        }
+      }
+      auto rootVehicleTag = Compound();
+      rootVehicleTag->set(u8"Entity", entity);
+      rootVehicleTag->set(u8"Attach", vehicleUuid.toIntArrayTag());
+      player.set(u8"RootVehicle", rootVehicleTag);
+    }
+
+    CompoundTagPtr shoulderEntityLeft;
+    CompoundTagPtr shoulderEntityRight;
+    ctx.drainShoulderEntities(bedrockId, shoulderEntityLeft, shoulderEntityRight);
+    if (shoulderEntityLeft) {
+      player.set(u8"ShoulderEntityLeft", shoulderEntityLeft);
+    }
+    if (shoulderEntityRight) {
+      player.set(u8"ShoulderEntityRight", shoulderEntityRight);
+    }
+  }
+
   static Status Terraform(
       map<mcfile::Dimension, vector<pair<Pos2i, Context::ChunksInRegion>>> const &regions,
       fs::path const &output,

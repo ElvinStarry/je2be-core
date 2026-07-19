@@ -203,7 +203,7 @@ public:
         Pos2i pos(cx, cz);
         entities[result->fUuid] = result->fEntity;
         if (result->fLeasherId) {
-          if (auto localPlayer = ctx.mapLocalPlayerId(*result->fLeasherId); localPlayer) {
+          if (auto player = ctx.mapPlayerId(*result->fLeasherId); player) {
             // Nop here.
           } else {
             ctx.fLeashedEntities[result->fUuid] = {.fChunk = pos, .fLeasherId = *result->fLeasherId};
@@ -393,6 +393,7 @@ public:
   static void AttachPassengers(Context &ctx,
                                std::unordered_map<Uuid, CompoundTagPtr, UuidHasher, UuidPred> &entities) {
     using namespace std;
+    ctx.promoteRootVehicles();
     unordered_set<Uuid, UuidHasher, UuidPred> resolvedVehicleEntities;
     for (auto &it : ctx.fVehicleEntities) {
       Uuid vehicleUuid = it.first;
@@ -415,7 +416,7 @@ public:
       for (auto const &passenger : passengers) {
         size_t passengerIndex = passenger.first;
         Uuid passengerUuid = passenger.second;
-        if (ctx.isLocalPlayerId(passengerUuid)) {
+        if (ctx.isPlayerId(passengerUuid)) {
           resolvedPassengers.insert(passengerIndex);
           continue;
         }
@@ -434,8 +435,7 @@ public:
       if (passengers.empty()) {
         resolvedVehicleEntities.insert(vehicleUuid);
         if (ctx.isRootVehicle(vehicleUuid)) {
-          ctx.setRootVehicle(vehicleUuid);
-          ctx.setRootVehicleEntity(vehicle);
+          ctx.setRootVehicleEntity(vehicleUuid, vehicle);
           entities.erase(vehicleUuid);
         }
       }

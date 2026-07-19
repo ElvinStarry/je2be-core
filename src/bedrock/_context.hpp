@@ -37,6 +37,15 @@ public:
     Pos2iSet fChunks;
   };
 
+  struct PlayerData {
+    std::string fKey;
+    CompoundTagPtr fEntity;
+
+    bool isLocal() const {
+      return fKey == "~local_player";
+    }
+  };
+
   static Status Init(std::filesystem::path const &dbname,
                      Options opt,
                      mcfile::Encoding encoding,
@@ -45,6 +54,7 @@ public:
                      i64 gameTick,
                      GameMode gameMode,
                      unsigned int concurrency,
+                     std::vector<PlayerData> &players,
                      std::unique_ptr<Context> &out);
 
   void markMapUuidAsUsed(i64 uuid);
@@ -53,17 +63,25 @@ public:
   std::optional<MapInfo::Map> mapFromUuid(i64 mapUuid) const;
   void structures(mcfile::Dimension d, Pos2i chunk, std::vector<StructureInfo::Structure> &buffer);
   std::shared_ptr<Context> make() const;
+  void addPlayerMapping(i64 entityIdB, Uuid const &entityIdJ);
   void setLocalPlayerIds(i64 entityIdB, Uuid const &entityIdJ);
-  std::optional<Uuid> mapLocalPlayerId(i64 entityIdB) const;
+  std::optional<Uuid> mapPlayerId(i64 entityIdB) const;
+  std::optional<i64> localPlayerId() const;
+  Uuid mapEntityId(i64 entityIdB) const;
+  bool isPlayerId(Uuid const &uuid) const;
   bool isLocalPlayerId(Uuid const &uuid) const;
+  void setRootVehicleForPlayer(i64 playerIdB, Uuid const &vehicleUid);
   void setRootVehicle(Uuid const &vehicleUid);
-  void setRootVehicleEntity(CompoundTagPtr const &vehicleEntity);
+  void setRootVehicleEntity(Uuid const &vehicleUid, CompoundTagPtr const &vehicleEntity);
+  void promoteRootVehicles();
   bool isRootVehicle(Uuid const &uuid) const;
-  std::optional<std::pair<Uuid, CompoundTagPtr>> drainRootVehicle();
+  std::optional<std::pair<Uuid, CompoundTagPtr>> drainRootVehicle(i64 playerIdB);
+  void setShoulderEntityLeft(i64 playerIdB, i64 uid);
+  void setShoulderEntityRight(i64 playerIdB, i64 uid);
   void setShoulderEntityLeft(i64 uid);
   void setShoulderEntityRight(i64 uid);
   bool setShoulderEntityIfItIs(i64 uid, CompoundTagPtr entityB);
-  void drainShoulderEntities(CompoundTagPtr &left, CompoundTagPtr &right);
+  void drainShoulderEntities(i64 playerIdB, CompoundTagPtr &left, CompoundTagPtr &right);
   void addToPoiIfItIs(mcfile::Dimension dim, Pos3i const &pos, mcfile::je::Block const &block);
   std::optional<std::pair<mcfile::Dimension, Pos3i>> getLodestone(i32 trackingHandle) const;
 
@@ -99,6 +117,7 @@ private:
   std::shared_ptr<MapInfo const> fMapInfo;
   std::shared_ptr<StructureInfo const> fStructureInfo;
   std::unordered_set<i64> fUsedMapUuids;
+  std::unordered_map<i64, Uuid> fPlayerIds;
 
   struct LocalPlayer {
     i64 fBedrockId;
@@ -107,15 +126,19 @@ private:
   std::optional<LocalPlayer> fLocalPlayer;
 
   struct RootVehicle {
-    Uuid fUid;
+    Uuid fAttach;
+    Uuid fRoot;
     CompoundTagPtr fVehicle;
   };
-  std::optional<RootVehicle> fRootVehicle;
+  std::unordered_map<i64, RootVehicle> fRootVehicles;
 
-  std::optional<i64> fShoulderEntityLeftId;
-  std::optional<i64> fShoulderEntityRightId;
-  CompoundTagPtr fShoulderEntityLeft;
-  CompoundTagPtr fShoulderEntityRight;
+  struct ShoulderEntities {
+    std::optional<i64> fLeftId;
+    std::optional<i64> fRightId;
+    CompoundTagPtr fLeft;
+    CompoundTagPtr fRight;
+  };
+  std::unordered_map<i64, ShoulderEntities> fShoulderEntities;
 
   std::unordered_map<mcfile::Dimension, PoiBlocks> fPoiBlocks;
   std::unordered_map<i32, std::pair<mcfile::Dimension, Pos3i>> const fLodestones;

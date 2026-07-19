@@ -153,8 +153,7 @@ public:
       if (!uid) {
         return std::nullopt;
       }
-      i64 v = *uid;
-      Uuid uuid = Uuid::GenWithU64Seed(*(u64 *)&v);
+      Uuid uuid = ctx.mapEntityId(*uid);
 
       auto const *table = GetTable();
       std::u8string_view key(*id);
@@ -185,7 +184,7 @@ public:
         r.fLeasherId = leasherId;
 
         // NOTE: This "leash" property will be replaced to int array tag like [x, y, z] when the leasher is a leash_knot.
-        auto leasherIdJ = Uuid::GenWithI64Seed(leasherId);
+        auto leasherIdJ = ctx.mapEntityId(leasherId);
         auto leash = Compound();
         leash->set(u8"UUID", leasherIdJ.toIntArrayTag());
         e->set(u8"leash", leash);
@@ -264,12 +263,7 @@ public:
 #pragma region Dedicated Behaviors
   static void Allay(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     if (auto ownerNew = b.int64(u8"OwnerNew"); ownerNew) {
-      Uuid uuid;
-      if (auto mapped = ctx.mapLocalPlayerId(*ownerNew); mapped) {
-        uuid = *mapped;
-      } else {
-        uuid = Uuid::GenWithI64Seed(*ownerNew);
-      }
+      Uuid uuid = ctx.mapEntityId(*ownerNew);
       auto brain = Compound();
       auto memories = Compound();
       auto likedPlayer = Compound();
@@ -687,12 +681,7 @@ public:
         if (!uuidB) {
           continue;
         }
-        Uuid uuidJ;
-        if (auto mapped = ctx.mapLocalPlayerId(*uuidB); mapped) {
-          uuidJ = *mapped;
-        } else {
-          uuidJ = Uuid::GenWithI64Seed(*uuidB);
-        }
+        Uuid uuidJ = ctx.mapEntityId(*uuidB);
         trusted->push_back(uuidJ.toIntArrayTag());
       }
     }
@@ -795,7 +784,7 @@ public:
   static void IronGolem(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     auto target = b.int64(u8"TargetID", -1);
     if (target != -1) {
-      auto angryAt = Uuid::GenWithI64Seed(target);
+      auto angryAt = ctx.mapEntityId(target);
       j[u8"AngryAt"] = angryAt.toIntArrayTag();
     }
 
@@ -812,12 +801,8 @@ public:
       }
     }
     if (auto ownerIdB = b.int64(u8"OwnerID"); ownerIdB && *ownerIdB != -1) {
-      Uuid uuid;
-      if (auto mapped = ctx.mapLocalPlayerId(*ownerIdB); mapped) {
-        uuid = *mapped;
-      } else {
-        uuid = Uuid::GenWithI64Seed(*ownerIdB);
-      }
+      Uuid uuid = ctx.mapEntityId(*ownerIdB);
+      j[u8"Owner"] = uuid.toIntArrayTag();
       j[u8"Thrower"] = uuid.toIntArrayTag();
     }
     CopyShortValues(b, j, {{u8"Age"}, {u8"Health"}});
@@ -1111,8 +1096,35 @@ public:
   static void ZombifiedPiglin(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     auto targetId = b.int64(u8"TargetID", -1);
     if (targetId != -1) {
-      auto angryAt = Uuid::GenWithI64Seed(targetId);
+      auto angryAt = ctx.mapEntityId(targetId);
       j[u8"AngryAt"] = angryAt.toIntArrayTag();
+    }
+  }
+
+  static void Warden(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    auto nuisances = b.listTag(u8"Nuisances");
+    if (!nuisances) {
+      return;
+    }
+    auto suspects = List<Tag::Type::Compound>();
+    for (auto const &it : *nuisances) {
+      auto nuisance = it->asCompound();
+      if (!nuisance) {
+        continue;
+      }
+      auto actorId = nuisance->int64(u8"ActorId");
+      if (!actorId || *actorId == -1) {
+        continue;
+      }
+      auto suspect = Compound();
+      suspect->set(u8"uuid", ctx.mapEntityId(*actorId).toIntArrayTag());
+      suspect->set(u8"anger", Int(nuisance->int32(u8"Anger", 0)));
+      suspects->push_back(suspect);
+    }
+    if (!suspects->empty()) {
+      auto anger = Compound();
+      anger->set(u8"suspects", suspects);
+      j[u8"anger"] = anger;
     }
   }
 #pragma endregion
@@ -1132,6 +1144,10 @@ public:
 
   static void AngerTime(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     j[u8"AngerTime"] = Int(0);
+    auto targetId = b.int64(u8"TargetID", -1);
+    if (targetId != -1) {
+      j[u8"AngryAt"] = ctx.mapEntityId(targetId).toIntArrayTag();
+    }
   }
 
   static void ArmorItems(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
@@ -1498,6 +1514,9 @@ public:
 
   static void InLove(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     CopyIntValues(b, j, {{u8"InLove", u8"InLove", 0}});
+    if (auto loveCause = b.int64(u8"LoveCause"); loveCause && *loveCause != 0 && *loveCause != -1) {
+      j[u8"LoveCause"] = ctx.mapEntityId(*loveCause).toIntArrayTag();
+    }
   }
 
   static void Inventory(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
@@ -1577,7 +1596,7 @@ public:
 
   static void LastHurtByMob(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     if (auto uuidB = b.int64(u8"TargetID"); uuidB && *uuidB != -1) {
-      auto uuidJ = Uuid::GenWithI64Seed(*uuidB);
+      auto uuidJ = ctx.mapEntityId(*uuidB);
       j[u8"last_hurt_by_mob"] = uuidJ.toIntArrayTag();
     }
   }
@@ -1697,19 +1716,14 @@ public:
   }
 
   static void Owner(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
-    auto ownerNew = b.int64(u8"OwnerNew");
-    if (!ownerNew) {
+    i64 owner = b.int64(u8"OwnerNew", -1);
+    if (owner == -1) {
+      owner = b.int64(u8"OwnerID", -1);
+    }
+    if (owner == -1) {
       return;
     }
-    if (ownerNew == -1) {
-      return;
-    }
-    Uuid uuid;
-    if (auto mapped = ctx.mapLocalPlayerId(*ownerNew); mapped) {
-      uuid = *mapped;
-    } else {
-      uuid = Uuid::GenWithI64Seed(*ownerNew);
-    }
+    Uuid uuid = ctx.mapEntityId(owner);
     j[u8"Owner"] = uuid.toIntArrayTag();
   }
 
@@ -2175,11 +2189,14 @@ public:
         continue;
       }
       Uuid passengerUid;
-      if (auto localPlayer = ctx.mapLocalPlayerId(*id); localPlayer) {
-        passengerUid = *localPlayer;
-        st = PassengerStatus::ContainsLocalPlayer;
+      if (auto player = ctx.mapPlayerId(*id); player) {
+        passengerUid = *player;
+        ctx.setRootVehicleForPlayer(*id, uid);
+        if (ctx.isLocalPlayerId(passengerUid)) {
+          st = PassengerStatus::ContainsLocalPlayer;
+        }
       } else {
-        passengerUid = Uuid::GenWithI64Seed(*id);
+        passengerUid = ctx.mapEntityId(*id);
       }
       passengers[index] = passengerUid;
     }
@@ -2400,8 +2417,7 @@ public:
     if (uuid) {
       uidJ = *uuid;
     } else {
-      i64 v = *uidB;
-      uidJ = Uuid::GenWithU64Seed(*(u64 *)&v);
+      uidJ = ctx.mapEntityId(*uidB);
     }
     j[u8"UUID"] = uidJ.toIntArrayTag();
 
@@ -2572,7 +2588,7 @@ public:
     E(falling_block, C(Same, Base, FallingBlock));
 
     E(frog, C(Same, Animal, PersistenceRequiredDefault, Impl::Frog));
-    E(warden, C(Same, LivingEntity));
+    E(warden, C(Same, LivingEntity, Warden));
     E(allay, C(Same, LivingEntity, NoGravity, Inventory, Allay));
     E(tadpole, C(Same, LivingEntity, AgeableE(24000), FromBucket));
 
