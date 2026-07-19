@@ -1,0 +1,132 @@
+name: New CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '?'
+        required: true
+        default: main
+        type: string
+      windows:
+        description: W
+        required: true
+        default: true
+        type: boolean
+      linux:
+        description: L
+        required: true
+        default: true
+        type: boolean
+      macos:
+        description: M
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    if: ${{ inputs.windows }}
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: je2be-windows-${{ github.run_number }}
+          if-no-files-found: error
+          path: |
+            build/Release/*.exe
+            build/Release/*.dll
+            build/Release/je2be.lib
+            include/
+
+  linux:
+    if: ${{ inputs.linux }}
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: je2be-linux-${{ github.run_number }}
+          if-no-files-found: error
+          path: |
+            build/j2b
+            build/b2j
+            build/x2j
+            build/p2j
+            build/dump
+            build/j2b2j
+            build/je2be-test
+            build/libje2be.a
+            include/
+
+  macos:
+    if: ${{ inputs.macos }}
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: je2be-macos-${{ github.run_number }}
+          if-no-files-found: error
+          path: |
+            build/j2b
+            build/b2j
+            build/x2j
+            build/p2j
+            build/dump
+            build/j2b2j
+            build/je2be-test
+            build/libje2be.a
+            include/
