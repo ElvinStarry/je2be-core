@@ -1683,6 +1683,20 @@ public:
     return item;
   }
 
+  static std::optional<i32> SpecialPrice(CompoundTag const &recipeB) {
+    auto buyA = recipeB.compoundTag(u8"buyA");
+    auto currentPrice = buyA ? buyA->byte(u8"Count") : std::nullopt;
+    auto basePrice = recipeB.int32(u8"buyCountA");
+    if (!currentPrice || !basePrice || *currentPrice <= 0 || *basePrice <= 0) {
+      return std::nullopt;
+    }
+
+    i32 demand = recipeB.int32(u8"demand", 0);
+    float multiplier = recipeB.float32(u8"priceMultiplierA", 0);
+    i32 demandPrice = std::max(0, static_cast<i32>(std::floor(static_cast<float>(*basePrice * demand) * multiplier)));
+    return static_cast<i32>(*currentPrice) - *basePrice - demandPrice;
+  }
+
   static CompoundTagPtr Recipe(CompoundTag const &recipeB, Context &ctx, int dataVersion) {
     auto sellB = recipeB.compoundTag(u8"sell");
     if (!sellB) {
@@ -1718,6 +1732,9 @@ public:
     CopyIntValues(recipeB, *ret, {{u8"demand"}, {u8"maxUses"}, {u8"uses"}, {u8"traderExp", u8"xp"}});
     CopyByteValues(recipeB, *ret, {{u8"rewardExp"}});
     CopyFloatValues(recipeB, *ret, {{u8"priceMultiplierA", u8"priceMultiplier"}, {u8"priceMultiplierB"}});
+    if (auto specialPrice = SpecialPrice(recipeB); specialPrice) {
+      ret->set(u8"specialPrice", Int(*specialPrice));
+    }
 
     return ret;
   }

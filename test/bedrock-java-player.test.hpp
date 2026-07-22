@@ -220,3 +220,91 @@ TEST_CASE("bedrock java player entity references") {
     CHECK(suspectUuid->value() == playerUuid.toIntArrayTag()->value());
   }
 }
+
+TEST_CASE("bedrock villager discounted trades") {
+  auto tmp = mcfile::File::CreateTempDir(fs::temp_directory_path());
+  REQUIRE(tmp);
+  defer {
+    Fs::DeleteAll(*tmp);
+  };
+
+  auto dbPath = *tmp / "db";
+  leveldb::Options dbOptions;
+  dbOptions.create_if_missing = true;
+  leveldb::DB *rawDb = nullptr;
+  REQUIRE(leveldb::DB::Open(dbOptions, dbPath, &rawDb).ok());
+  delete rawDb;
+
+  je2be::bedrock::Options options;
+  options.fTempDirectory = *tmp;
+  std::map<mcfile::Dimension, std::vector<std::pair<Pos2i, je2be::bedrock::Context::ChunksInRegion>>> regions;
+  u64 totalChunks = 0;
+  std::vector<je2be::bedrock::Context::PlayerData> players;
+  std::unique_ptr<je2be::bedrock::Context> ctx;
+  REQUIRE(je2be::bedrock::Context::Init(dbPath, options, Encoding::LittleEndian, regions, totalChunks, 0, je2be::GameMode::Survival, 1, players, ctx).ok());
+  REQUIRE(ctx);
+
+  auto item = [](std::u8string const &name, i8 count) {
+    auto ret = Compound();
+    ret->set(u8"Name", name);
+    ret->set(u8"Count", je2be::Byte(count));
+    ret->set(u8"Damage", Short(0));
+    return ret;
+  };
+  auto recipe = [&](std::u8string const &name, i32 currentPrice, i32 basePrice, i32 demand, float multiplier) {
+    auto ret = Compound();
+    ret->set(u8"buyA", item(name, static_cast<i8>(currentPrice)));
+    ret->set(u8"buyCountA", Int(basePrice));
+    ret->set(u8"buyCountB", Int(0));
+    ret->set(u8"demand", Int(demand));
+    ret->set(u8"maxUses", Int(16));
+    ret->set(u8"priceMultiplierA", Float(multiplier));
+    ret->set(u8"priceMultiplierB", Float(0));
+    ret->set(u8"rewardExp", je2be::Byte(1));
+    ret->set(u8"sell", item(u8"minecraft:emerald", 1));
+    ret->set(u8"traderExp", Int(1));
+    ret->set(u8"uses", Int(0));
+    return ret;
+  };
+
+  auto recipes = List<Tag::Type::Compound>();
+  recipes->push_back(recipe(u8"minecraft:rabbit", 1, 4, 0, 0.05f));
+  recipes->push_back(recipe(u8"minecraft:coal", 9, 15, 0, 0.05f));
+  recipes->push_back(recipe(u8"minecraft:beef", 4, 10, 0, 0.05f));
+  recipes->push_back(recipe(u8"minecraft:iron_ingot", 7, 10, 2, 0.1f));
+
+  auto offers = Compound();
+  offers->set(u8"Recipes", recipes);
+  auto villager = Compound();
+  villager->set(u8"identifier", u8"minecraft:villager_v2");
+  villager->set(u8"UniqueID", Long(1));
+  villager->set(u8"Variant", Int(11));
+  villager->set(u8"MarkVariant", Int(0));
+  villager->set(u8"Offers", offers);
+
+  for (int dataVersion : {kJavaDataVersionComponentIntroduced - 1, kJavaDataVersion}) {
+    CAPTURE(dataVersion);
+    auto converted = je2be::bedrock::Entity::From(*villager, *ctx, dataVersion);
+    REQUIRE(converted);
+    auto convertedOffers = converted->fEntity->compoundTag(u8"Offers");
+    REQUIRE(convertedOffers);
+    auto convertedRecipes = convertedOffers->listTag(u8"Recipes");
+    REQUIRE(convertedRecipes);
+    REQUIRE(convertedRecipes->size() == 4);
+
+    std::array<i32, 4> const basePrices = {4, 15, 10, 10};
+    std::array<i32, 4> const specialPrices = {-3, -6, -6, -5};
+    for (size_t i = 0; i < convertedRecipes->size(); i++) {
+      auto convertedRecipe = convertedRecipes->at(i)->asCompound();
+      REQUIRE(convertedRecipe);
+      auto buy = convertedRecipe->compoundTag(u8"buy");
+      REQUIRE(buy);
+      if (dataVersion >= kJavaDataVersionComponentIntroduced) {
+        CHECK(buy->int32(u8"count") == basePrices[i]);
+      } else {
+        CHECK(buy->byte(u8"Count") == basePrices[i]);
+      }
+      CHECK(convertedRecipe->int32(u8"specialPrice") == specialPrices[i]);
+    }
+  }
+}
