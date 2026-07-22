@@ -21,6 +21,7 @@
 
 #include <atomic>
 #include <exception>
+#include <fstream>
 #include <latch>
 #include <thread>
 
@@ -34,6 +35,12 @@ class Converter::Impl {
     Context::PlayerData fSource;
     i64 fBedrockId;
     Uuid fJavaId;
+  };
+
+  struct PlayerListEntry {
+    std::string fBedrockUuid;
+    Uuid fJavaId;
+    bool fIsReal;
   };
 
   struct ConvertedPlayer {
@@ -73,12 +80,16 @@ public:
 
     Options effectiveOptions = options;
     vector<ResolvedPlayer> resolvedPlayers;
-    if (auto st = ResolvePlayers(players, options, *bin, effectiveOptions, resolvedPlayers); !st.ok()) {
+    vector<PlayerListEntry> playerList;
+    if (auto st = ResolvePlayers(players, options, *bin, effectiveOptions, resolvedPlayers, playerList); !st.ok()) {
       return JE2BE_ERROR_PUSH(st);
     }
 
     if (!PrepareOutputDirectory(output)) {
       return JE2BE_ERROR;
+    }
+    if (auto st = WritePlayerList(output / "player_list.csv", playerList); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
     }
 
     unique_ptr<ReadonlyDb> db;
@@ -220,10 +231,20 @@ private:
                                Options const &options,
                                Context &ctx,
                                Options &effectiveOptions,
-                               std::vector<ResolvedPlayer> &resolvedPlayers) {
-    std::map<std::u8string, std::optional<Uuid>> cache;
-    std::map<i64, Uuid> mappings;
-    std::vector<ResolvedPlayer> markedPlayers;
+                               std::vector<ResolvedPlayer> &resolvedPlayers,
+                               std::vector<PlayerListEntry> &playerList) {
+    struct LookupResult {
+      std::optional<Uuid> fUuid;
+      std::string fError;
+    };
+    struct Mapping {
+      Uuid fJavaId;
+      bool fIsReal;
+    };
+
+    std::map<std::u8string, LookupResult> cache;
+    std::map<i64, Mapping> mappings;
+    std::vector<ResolvedPlayer> candidates;
     for (auto const &player : players) {
       auto bedrockId = player.fEntity->int64(u8"UniqueID");
       if (!bedrockId) {
@@ -236,35 +257,73 @@ private:
       auto key = PlayerNameCacheKey(*name);
       auto found = cache.find(key);
       if (found == cache.end()) {
+        LookupResult result;
         try {
-          found = cache.emplace(key, JavaPlayer::ResolveUuid(*name, options)).first;
+          result.fUuid = JavaPlayer::ResolveUuid(*name, options);
         } catch (std::exception const &e) {
-          std::string const javaName(reinterpret_cast<char const *>(name->data()), name->size());
-          return JE2BE_ERROR_WHAT("Failed to resolve Java UUID for JavaTag player '" + javaName + "': " + e.what());
+          result.fError = e.what();
         } catch (...) {
-          std::string const javaName(reinterpret_cast<char const *>(name->data()), name->size());
-          return JE2BE_ERROR_WHAT("Failed to resolve Java UUID for JavaTag player '" + javaName + "'");
+          result.fError = "unknown error";
         }
+        found = cache.emplace(key, std::move(result)).first;
       }
-      if (!found->second) {
+      if (!found->second.fUuid) {
+        if (!player.isLocal()) {
+          continue;
+        }
         std::string const javaName(reinterpret_cast<char const *>(name->data()), name->size());
-        return JE2BE_ERROR_WHAT("Failed to resolve Java UUID for JavaTag player '" + javaName + "'");
+        std::string what = "Failed to resolve Java UUID for JavaTag player '" + javaName + "'";
+        if (!found->second.fError.empty()) {
+          what += ": " + found->second.fError;
+        }
+        return JE2BE_ERROR_WHAT(what);
       }
-      Uuid uuid = *found->second;
+      Uuid uuid = *found->second.fUuid;
       auto mapped = mappings.find(*bedrockId);
-      if (mapped != mappings.end() && !UuidPred{}(mapped->second, uuid)) {
+      if (mapped != mappings.end() && !UuidPred{}(mapped->second.fJavaId, uuid)) {
         return JE2BE_ERROR_WHAT("Conflicting Java UUIDs for Bedrock player UniqueID " + std::to_string(*bedrockId));
       }
-      mappings[*bedrockId] = uuid;
-      markedPlayers.push_back({player, *bedrockId, uuid});
+      mappings.insert_or_assign(*bedrockId, Mapping{uuid, true});
+      candidates.push_back({player, *bedrockId, uuid});
     }
 
-    for (auto const &[bedrockId, javaId] : mappings) {
-      ctx.addPlayerMapping(bedrockId, javaId);
+    std::unordered_set<Uuid, UuidHasher, UuidPred> usedJavaIds;
+    for (auto const &[_, mapping] : mappings) {
+      usedJavaIds.insert(mapping.fJavaId);
+    }
+
+    playerList.clear();
+    constexpr std::string_view serverPlayerPrefix = "player_server_";
+    for (auto const &player : players) {
+      if (!player.fKey.starts_with(serverPlayerPrefix) ||
+          player.fKey.size() == serverPlayerPrefix.size()) {
+        continue;
+      }
+      auto bedrockId = player.fEntity->int64(u8"UniqueID");
+      if (!bedrockId) {
+        continue;
+      }
+      auto mapped = mappings.find(*bedrockId);
+      if (mapped == mappings.end()) {
+        Uuid generated;
+        do {
+          generated = Uuid::Gen();
+        } while (usedJavaIds.contains(generated));
+        usedJavaIds.insert(generated);
+        mapped = mappings.emplace(*bedrockId, Mapping{generated, false}).first;
+        candidates.push_back({player, *bedrockId, generated});
+      }
+      playerList.push_back({player.fKey.substr(serverPlayerPrefix.size()),
+                            mapped->second.fJavaId,
+                            mapped->second.fIsReal});
+    }
+
+    for (auto const &[bedrockId, mapping] : mappings) {
+      ctx.addPlayerMapping(bedrockId, mapping.fJavaId);
     }
 
     std::map<std::u8string, ResolvedPlayer> selectedPlayers;
-    for (auto const &player : markedPlayers) {
+    for (auto const &player : candidates) {
       auto key = player.fJavaId.toString();
       auto selected = selectedPlayers.find(key);
       if (selected == selectedPlayers.end()) {
@@ -284,10 +343,10 @@ private:
         continue;
       }
       auto mapped = mappings.find(*bedrockId);
-      if (mapped != mappings.end()) {
-        effectiveOptions.fLocalPlayer = std::make_shared<Uuid const>(mapped->second);
-        selectedPlayers[mapped->second.toString()] = {player, *bedrockId, mapped->second};
-      } else if (options.fLocalPlayer) {
+      if (mapped == mappings.end()) {
+        if (!options.fLocalPlayer) {
+          continue;
+        }
         auto key = options.fLocalPlayer->toString();
         auto selected = selectedPlayers.find(key);
         if (selected != selectedPlayers.end() && selected->second.fBedrockId != *bedrockId) {
@@ -295,12 +354,32 @@ private:
           return JE2BE_ERROR_WHAT("Java UUID " + javaId + " is assigned to multiple Bedrock player UniqueIDs");
         }
         ctx.addPlayerMapping(*bedrockId, *options.fLocalPlayer);
+      } else {
+        effectiveOptions.fLocalPlayer = std::make_shared<Uuid const>(mapped->second.fJavaId);
+        selectedPlayers[mapped->second.fJavaId.toString()] = {player, *bedrockId, mapped->second.fJavaId};
       }
     }
 
     resolvedPlayers.clear();
     for (auto const &[_, player] : selectedPlayers) {
       resolvedPlayers.push_back(player);
+    }
+    return Status::Ok();
+  }
+
+  static Status WritePlayerList(std::filesystem::path const &path, std::vector<PlayerListEntry> const &players) {
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    if (!stream) {
+      return JE2BE_ERROR_WHAT("Failed to create player list: " + path.string());
+    }
+    stream << "uuid0,uuid1,isReal\n";
+    for (auto const &player : players) {
+      auto javaId = player.fJavaId.toString();
+      std::string const javaIdString(reinterpret_cast<char const *>(javaId.data()), javaId.size());
+      stream << player.fBedrockUuid << ',' << javaIdString << ',' << (player.fIsReal ? "true" : "false") << '\n';
+    }
+    if (!stream) {
+      return JE2BE_ERROR_WHAT("Failed to write player list: " + path.string());
     }
     return Status::Ok();
   }

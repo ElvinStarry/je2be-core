@@ -175,3 +175,86 @@ TEST_CASE("shoulder-riders") {
   CHECK(conflict.error()->fWhat.find("is assigned to multiple Bedrock player UniqueIDs") != std::string::npos);
   CHECK(fs::exists(sentinel));
 }
+
+TEST_CASE("bedrock player list") {
+  fs::path thisFile(__FILE__);
+  auto original = thisFile.parent_path() / "data" / "shoulder-riders";
+  auto tmp = mcfile::File::CreateTempDir(fs::temp_directory_path());
+  REQUIRE(tmp);
+  defer {
+    fs::remove_all(*tmp);
+  };
+
+  auto be = *tmp / "be";
+  fs::create_directories(be);
+  je2be::java::Options optToBe;
+  optToBe.fDimensionFilter.insert(mcfile::Dimension::Overworld);
+  optToBe.fChunkFilter.insert(Pos2i(0, 0));
+  REQUIRE(je2be::java::Converter::Run(original, be, optToBe, 1).ok());
+
+  {
+    leveldb::DB *rawDb = nullptr;
+    leveldb::Options dbOptions;
+    dbOptions.compression = leveldb::kZlibRawCompression;
+    REQUIRE(leveldb::DB::Open(dbOptions, be / "db", &rawDb).ok());
+    std::unique_ptr<leveldb::DB> db(rawDb);
+    std::string playerData;
+    REQUIRE(db->Get({}, mcfile::be::DbKey::LocalPlayer(), &playerData).ok());
+    auto player = CompoundTag::Read(playerData, Encoding::LittleEndian);
+    REQUIRE(player);
+
+    auto randomPlayer = player->copy();
+    randomPlayer->set(u8"UniqueID", Long(-8589934501));
+    randomPlayer->set(u8"LeftShoulderRiderID", Long(-1));
+    randomPlayer->set(u8"RightShoulderPassengerID", Long(-1));
+    auto randomSerialized = CompoundTag::Write(*randomPlayer, Encoding::LittleEndian);
+    REQUIRE(randomSerialized);
+    REQUIRE(db->Put({}, "player_server_random", *randomSerialized).ok());
+
+    auto realPlayer = player->copy();
+    realPlayer->set(u8"UniqueID", Long(-8589934502));
+    realPlayer->set(u8"LeftShoulderRiderID", Long(-1));
+    realPlayer->set(u8"RightShoulderPassengerID", Long(-1));
+    auto inventory = realPlayer->listTag(u8"Inventory");
+    REQUIRE(inventory);
+    auto display = Compound();
+    display->set(u8"Name", u8"JavaTag=Otto");
+    auto tag = Compound();
+    tag->set(u8"display", display);
+    auto marker = Compound();
+    marker->set(u8"Count", je2be::Byte(1));
+    marker->set(u8"tag", tag);
+    inventory->push_back(marker);
+    auto realSerialized = CompoundTag::Write(*realPlayer, Encoding::LittleEndian);
+    REQUIRE(realSerialized);
+    REQUIRE(db->Put({}, "player_server_real", *realSerialized).ok());
+  }
+
+  auto je = *tmp / "je";
+  je2be::bedrock::Options optToJe;
+  optToJe.fDimensionFilter.insert(mcfile::Dimension::Overworld);
+  optToJe.fChunkFilter.insert(Pos2i(0, 0));
+  Uuid const realUuid = *Uuid::FromString(u8"bb84e4a8-a756-42ee-8909-2ef9a527064c");
+  optToJe.fJavaPlayerUuidResolver = [realUuid](std::u8string const &name) -> std::optional<Uuid> {
+    return name == u8"Otto" ? std::optional<Uuid>(realUuid) : std::nullopt;
+  };
+  REQUIRE(je2be::bedrock::Converter::Run(be, je, optToJe, 1).ok());
+
+  std::ifstream playerList(je / "player_list.csv");
+  REQUIRE(playerList);
+  std::string header;
+  std::string randomLine;
+  std::string realLine;
+  REQUIRE(std::getline(playerList, header));
+  REQUIRE(std::getline(playerList, randomLine));
+  REQUIRE(std::getline(playerList, realLine));
+  CHECK(header == "uuid0,uuid1,isReal");
+  REQUIRE(randomLine.starts_with("random,"));
+  REQUIRE(randomLine.ends_with(",false"));
+  auto const randomUuidString = randomLine.substr(7, randomLine.size() - 13);
+  std::u8string const randomUuid(randomUuidString.begin(), randomUuidString.end());
+  REQUIRE(Uuid::FromString(randomUuid));
+  CHECK(fs::exists(je / "playerdata" / (randomUuidString + ".dat")));
+  CHECK(realLine == "real,bb84e4a8-a756-42ee-8909-2ef9a527064c,true");
+  CHECK(fs::exists(je / "playerdata" / "bb84e4a8-a756-42ee-8909-2ef9a527064c.dat"));
+}
