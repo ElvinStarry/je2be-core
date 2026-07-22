@@ -46,7 +46,7 @@ jobs:
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build
-        run: cmake --build build --config Release --parallel 2
+        run: cmake --build build --config Release --parallel
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -77,7 +77,7 @@ jobs:
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build
-        run: cmake --build build --config Release --parallel 2
+        run: cmake --build build --config Release --parallel
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -90,6 +90,7 @@ jobs:
             build/x2j
             build/p2j
             build/dump
+            build/j2j-uuid
             build/j2b2j
             build/je2be-test
             build/libje2be.a
@@ -113,7 +114,7 @@ jobs:
           -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build
-        run: cmake --build build --config Release
+        run: cmake --build build --config Release --parallel
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -126,6 +127,7 @@ jobs:
             build/x2j
             build/p2j
             build/dump
+            build/j2j-uuid
             build/j2b2j
             build/je2be-test
             build/libje2be.a

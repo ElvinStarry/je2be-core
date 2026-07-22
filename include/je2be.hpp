@@ -18,6 +18,7 @@
 #include <je2be/java/progress.hpp>
 #include <je2be/java/options.hpp>
 #include <je2be/java/converter.hpp>
+#include <je2be/java/uuid-replacer.hpp>
 
 #include <je2be/bedrock/progress.hpp>
 #include <je2be/bedrock/options.hpp>
