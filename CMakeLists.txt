@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
-project(je2be)
+project(je2be
+        VERSION 2.3.3.3
+        LANGUAGES CXX)
 
 include(cmake/CPM.cmake)
 
