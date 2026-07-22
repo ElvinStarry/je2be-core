@@ -1809,9 +1809,9 @@ public:
     if (posB->fType != Tag::Type::Float) {
       return;
     }
-    double x = posB->at(0)->asFloat()->fValue + 0.0001;
-    double y = posB->at(1)->asFloat()->fValue + 0.0001;
-    double z = posB->at(2)->asFloat()->fValue + 0.0001;
+    double x = posB->at(0)->asFloat()->fValue;
+    double y = posB->at(1)->asFloat()->fValue;
+    double z = posB->at(2)->asFloat()->fValue;
     Pos3d posJ(x, y, z);
     j[u8"Pos"] = posJ.toListTag();
   }
