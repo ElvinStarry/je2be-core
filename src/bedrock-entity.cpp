@@ -983,7 +983,18 @@ public:
   }
 
   static void Villager(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
-    CopyIntValues(b, j, {{u8"TradeExperience", u8"Xp", 0}});
+    i32 tradeExperience = b.int32(u8"TradeExperience", 0);
+    if (tradeExperience == 0) {
+      auto offers = b.compoundTag(u8"Offers");
+      if (!offers) {
+        offers = b.compoundTag(u8"persistingOffers");
+      }
+      auto recipes = offers ? offers->listTag(u8"Recipes") : nullptr;
+      if (recipes && !recipes->empty()) {
+        tradeExperience = 1;
+      }
+    }
+    j[u8"Xp"] = Int(tradeExperience);
 
     j.erase(u8"InLove");
 

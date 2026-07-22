@@ -286,6 +286,7 @@ TEST_CASE("bedrock villager discounted trades") {
     CAPTURE(dataVersion);
     auto converted = je2be::bedrock::Entity::From(*villager, *ctx, dataVersion);
     REQUIRE(converted);
+    CHECK(converted->fEntity->int32(u8"Xp") == 1);
     auto convertedOffers = converted->fEntity->compoundTag(u8"Offers");
     REQUIRE(convertedOffers);
     auto convertedRecipes = convertedOffers->listTag(u8"Recipes");
@@ -306,5 +307,12 @@ TEST_CASE("bedrock villager discounted trades") {
       }
       CHECK(convertedRecipe->int32(u8"specialPrice") == specialPrices[i]);
     }
+  }
+
+  villager->erase(u8"Offers");
+  for (int dataVersion : {kJavaDataVersionComponentIntroduced - 1, kJavaDataVersion}) {
+    auto converted = je2be::bedrock::Entity::From(*villager, *ctx, dataVersion);
+    REQUIRE(converted);
+    CHECK(converted->fEntity->int32(u8"Xp") == 0);
   }
 }
