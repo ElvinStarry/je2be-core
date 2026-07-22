@@ -46,7 +46,7 @@ jobs:
           "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
       - name: Build
-        run: cmake --build build --config Release --parallel 2
+        run: cmake --build build --config Release --parallel 2 --target j2b b2j x2j p2j dump j2j-uuid j2b2j je2be-test
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
