@@ -99,6 +99,53 @@ TEST_CASE("bedrock java player Mojang live lookup") {
   CHECK(uuid->toString() == u8"bb84e4a8-a756-42ee-8909-2ef9a527064c");
 }
 
+TEST_CASE("bedrock java player modern offhand") {
+  auto tmp = mcfile::File::CreateTempDir(fs::temp_directory_path());
+  REQUIRE(tmp);
+  defer {
+    fs::remove_all(*tmp);
+  };
+
+  auto dbPath = *tmp / "db";
+  leveldb::Options dbOptions;
+  dbOptions.create_if_missing = true;
+  leveldb::DB *rawDb = nullptr;
+  REQUIRE(leveldb::DB::Open(dbOptions, dbPath, &rawDb).ok());
+  delete rawDb;
+
+  je2be::bedrock::Options options;
+  std::map<mcfile::Dimension, std::vector<std::pair<Pos2i, je2be::bedrock::Context::ChunksInRegion>>> regions;
+  u64 totalChunks = 0;
+  std::vector<je2be::bedrock::Context::PlayerData> players;
+  std::unique_ptr<je2be::bedrock::Context> ctx;
+  REQUIRE(je2be::bedrock::Context::Init(dbPath, options, Encoding::LittleEndian, regions, totalChunks, 0, je2be::GameMode::Survival, 1, players, ctx).ok());
+  REQUIRE(ctx);
+
+  auto offhandItem = Compound();
+  offhandItem->set(u8"Name", u8"minecraft:shield");
+  offhandItem->set(u8"Count", je2be::Byte(1));
+  auto offhand = List<Tag::Type::Compound>();
+  offhand->push_back(offhandItem);
+
+  auto player = Compound();
+  player->set(u8"UniqueID", Long(-8589934586));
+  player->set(u8"Inventory", List<Tag::Type::Compound>());
+  player->set(u8"Offhand", offhand);
+
+  auto result = je2be::bedrock::Entity::LocalPlayer(*player, *ctx, nullptr, kJavaDataVersion);
+  REQUIRE(result);
+  auto inventory = result->fEntity->listTag(u8"Inventory");
+  REQUIRE(inventory);
+  REQUIRE(inventory->size() == 1);
+
+  auto converted = inventory->at(0)->asCompound();
+  REQUIRE(converted);
+  CHECK(converted->string(u8"id") == u8"minecraft:shield");
+  CHECK(converted->int32(u8"count") == 1);
+  CHECK_FALSE(converted->byte(u8"Count"));
+  CHECK(converted->byte(u8"Slot") == -106);
+}
+
 TEST_CASE("bedrock java player entity references") {
   auto tmp = mcfile::File::CreateTempDir(fs::temp_directory_path());
   REQUIRE(tmp);
