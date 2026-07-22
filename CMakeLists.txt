@@ -38,7 +38,8 @@ endif()
 CPMAddPackage(
   NAME libminecraft-file
   GITHUB_REPOSITORY kbinani/libminecraft-file
-  GIT_TAG 6f00d2c6c06b400424b5418193410bfbc0fe76bf)
+  GIT_TAG 6f00d2c6c06b400424b5418193410bfbc0fe76bf
+  PATCHES cmake/patches/libminecraft-file-mca-write-error.patch)
 
 CPMAddPackage(
   NAME defer

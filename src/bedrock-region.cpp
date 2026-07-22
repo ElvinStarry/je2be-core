@@ -104,13 +104,14 @@ public:
       return JE2BE_ERROR;
     }
 
-    if (!terrain->write(terrainMcaPath)) {
-      return JE2BE_ERROR;
+    string writeError;
+    if (!terrain->write(terrainMcaPath, &writeError)) {
+      return JE2BE_ERROR_WHAT(writeError);
     }
     terrain.reset();
 
-    if (!entities->write(entitiesMcaPath)) {
-      return JE2BE_ERROR;
+    if (!entities->write(entitiesMcaPath, &writeError)) {
+      return JE2BE_ERROR_WHAT(writeError);
     }
     entities.reset();
 
