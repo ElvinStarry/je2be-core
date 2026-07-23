@@ -449,7 +449,7 @@ set(test_files
   test/parallel.test.hpp
   test/java-uuid-replacer.test.hpp)
 
-if (NOT "${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+if (NOT WIN32)
   list(APPEND je2be_link_libraries pthread)
 endif()
 
