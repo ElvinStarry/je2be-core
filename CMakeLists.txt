@@ -449,11 +449,11 @@ set(test_files
   test/parallel.test.hpp
   test/java-uuid-replacer.test.hpp)
 
-if (NOT "${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+if (NOT WIN32)
   list(APPEND je2be_link_libraries pthread)
 endif()
 
-if ("${CMAKE_C_COMPILER_ID}" STREQUAL "MSVC")
+if (WIN32)
   add_definitions(/bigobj -D_SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING)
 elseif(NOT "${EMSCRIPTEN}" STREQUAL "1" AND NOT "${CMAKE_C_COMPILER_ID}" STREQUAL "AppleClang")
   add_definitions(-D_GLIBCXX_USE_TBB_PAR_BACKEND=0)
