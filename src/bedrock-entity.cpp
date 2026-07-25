@@ -2306,37 +2306,44 @@ public:
       }
       return itemJ.byte(u8"Count", 0) > 0;
     };
-    if (auto armorB = b.listTag(u8"Armor"); armorB && armorB->size() == 4) {
-      if (auto bootsB = armorB->at(3)->asCompound(); bootsB) {
-        if (auto bootsJ = Item::From(*bootsB, ctx, dataVersion, {}); bootsJ && hasItem(*bootsJ)) {
-          bootsJ->set(u8"Slot", Byte(100));
-          inventoryJ->push_back(bootsJ);
+    bool const useEquipment = dataVersion >= (int)JavaDataVersions::Snapshot25w03a;
+    if (!useEquipment) {
+      if (auto armorB = b.listTag(u8"Armor"); armorB && armorB->size() == 4) {
+        if (auto bootsB = armorB->at(3)->asCompound(); bootsB) {
+          if (auto bootsJ = Item::From(*bootsB, ctx, dataVersion, {}); bootsJ && hasItem(*bootsJ)) {
+            bootsJ->set(u8"Slot", Byte(100));
+            inventoryJ->push_back(bootsJ);
+          }
         }
-      }
-      if (auto leggingsB = armorB->at(2)->asCompound(); leggingsB) {
-        if (auto leggingsJ = Item::From(*leggingsB, ctx, dataVersion, {}); leggingsJ && hasItem(*leggingsJ)) {
-          leggingsJ->set(u8"Slot", Byte(101));
-          inventoryJ->push_back(leggingsJ);
+        if (auto leggingsB = armorB->at(2)->asCompound(); leggingsB) {
+          if (auto leggingsJ = Item::From(*leggingsB, ctx, dataVersion, {}); leggingsJ && hasItem(*leggingsJ)) {
+            leggingsJ->set(u8"Slot", Byte(101));
+            inventoryJ->push_back(leggingsJ);
+          }
         }
-      }
-      if (auto chestplateB = armorB->at(1)->asCompound(); chestplateB) {
-        if (auto chestplateJ = Item::From(*chestplateB, ctx, dataVersion, {}); chestplateJ && hasItem(*chestplateJ)) {
-          chestplateJ->set(u8"Slot", Byte(102));
-          inventoryJ->push_back(chestplateJ);
+        if (auto chestplateB = armorB->at(1)->asCompound(); chestplateB) {
+          if (auto chestplateJ = Item::From(*chestplateB, ctx, dataVersion, {}); chestplateJ && hasItem(*chestplateJ)) {
+            chestplateJ->set(u8"Slot", Byte(102));
+            inventoryJ->push_back(chestplateJ);
+          }
         }
-      }
-      if (auto helmetB = armorB->at(0)->asCompound(); helmetB) {
-        if (auto helmetJ = Item::From(*helmetB, ctx, dataVersion, {}); helmetJ && hasItem(*helmetJ)) {
-          helmetJ->set(u8"Slot", Byte(103));
-          inventoryJ->push_back(helmetJ);
+        if (auto helmetB = armorB->at(0)->asCompound(); helmetB) {
+          if (auto helmetJ = Item::From(*helmetB, ctx, dataVersion, {}); helmetJ && hasItem(*helmetJ)) {
+            helmetJ->set(u8"Slot", Byte(103));
+            inventoryJ->push_back(helmetJ);
+          }
         }
       }
     }
     if (auto offhandB = b.listTag(u8"Offhand"); offhandB && offhandB->size() > 0) {
       if (auto offhandItemB = offhandB->at(0)->asCompound(); offhandItemB) {
         if (auto offhandJ = Item::From(*offhandItemB, ctx, dataVersion, {}); offhandJ && hasItem(*offhandJ)) {
-          offhandJ->set(u8"Slot", Byte(-106));
-          inventoryJ->push_back(offhandJ);
+          if (useEquipment) {
+            AddEquipment(j, u8"offhand", offhandJ);
+          } else {
+            offhandJ->set(u8"Slot", Byte(-106));
+            inventoryJ->push_back(offhandJ);
+          }
         }
       }
     }
