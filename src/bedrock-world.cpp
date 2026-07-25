@@ -2,6 +2,7 @@
 
 #include <defer.hpp>
 
+#include "_data-version.hpp"
 #include "_file.hpp"
 #include "_parallel.hpp"
 #include "_props.hpp"
@@ -31,18 +32,35 @@ public:
     namespace fs = std::filesystem;
 
     fs::path dir;
-    switch (d) {
-    case Dimension::Overworld:
-      dir = root;
-      break;
-    case Dimension::Nether:
-      dir = root / "DIM-1";
-      break;
-    case Dimension::End:
-      dir = root / "DIM1";
-      break;
-    default:
-      return JE2BE_ERROR;
+    if constexpr (kJavaDataVersion >= 4903) {
+      auto base = root / u8"dimensions" / u8"minecraft";
+      switch (d) {
+      case Dimension::Overworld:
+        dir = base / u8"overworld";
+        break;
+      case Dimension::Nether:
+        dir = base / u8"the_nether";
+        break;
+      case Dimension::End:
+        dir = base / u8"the_end";
+        break;
+      default:
+        return JE2BE_ERROR;
+      }
+    } else {
+      switch (d) {
+      case Dimension::Overworld:
+        dir = root;
+        break;
+      case Dimension::Nether:
+        dir = root / u8"DIM-1";
+        break;
+      case Dimension::End:
+        dir = root / u8"DIM1";
+        break;
+      default:
+        return JE2BE_ERROR;
+      }
     }
 
     error_code ec;
