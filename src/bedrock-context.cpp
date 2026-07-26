@@ -554,7 +554,13 @@ void Context::addToPoiIfItIs(mcfile::Dimension dim, Pos3i const &pos, mcfile::je
 Status Context::exportMaps(std::filesystem::path const &root, mcfile::be::DbInterface &db) const {
   using namespace mcfile;
 
-  if (!Fs::CreateDirectories(root / "data")) {
+  std::filesystem::path mapsDir;
+  if constexpr (kJavaDataVersion >= 4903) {
+    mapsDir = root / u8"data" / u8"minecraft" / u8"maps";
+  } else {
+    mapsDir = root / "data";
+  }
+  if (!Fs::CreateDirectories(mapsDir)) {
     return JE2BE_ERROR;
   }
 
@@ -608,7 +614,13 @@ Status Context::exportMaps(std::filesystem::path const &root, mcfile::be::DbInte
     tagJ->set(u8"data", dataJ);
     tagJ->set(u8"DataVersion", Int(kJavaDataVersion));
 
-    auto path = root / "data" / ("map_" + std::to_string(number) + ".dat");
+    auto path = [&]() -> std::filesystem::path {
+      if constexpr (kJavaDataVersion >= 4903) {
+        return mapsDir / (std::to_string(number) + ".dat");
+      } else {
+        return mapsDir / ("map_" + std::to_string(number) + ".dat");
+      }
+    }();
     auto s = std::make_shared<mcfile::stream::GzFileOutputStream>(path);
     if (!CompoundTag::Write(*tagJ, s, mcfile::Encoding::Java)) {
       return JE2BE_ERROR;
@@ -620,15 +632,28 @@ Status Context::exportMaps(std::filesystem::path const &root, mcfile::be::DbInte
     }
   }
   if (maxMapNumber) {
-    auto idcounts = Compound();
-    auto d = Compound();
-    d->set(u8"map", Int(*maxMapNumber));
-    idcounts->set(u8"data", d);
-    idcounts->set(u8"DataVersion", Int(kJavaDataVersion));
-    auto path = root / "data" / "idcounts.dat";
-    auto s = std::make_shared<mcfile::stream::GzFileOutputStream>(path);
-    if (!CompoundTag::Write(*idcounts, s, mcfile::Encoding::Java)) {
-      return JE2BE_ERROR;
+    if constexpr (kJavaDataVersion >= 4903) {
+      auto idcounts = Compound();
+      auto d = Compound();
+      d->set(u8"map", Int(*maxMapNumber));
+      idcounts->set(u8"data", d);
+      idcounts->set(u8"DataVersion", Int(kJavaDataVersion));
+      auto path = mapsDir / u8"last_id.dat";
+      auto s = std::make_shared<mcfile::stream::GzFileOutputStream>(path);
+      if (!CompoundTag::Write(*idcounts, s, mcfile::Encoding::Java)) {
+        return JE2BE_ERROR;
+      }
+    } else {
+      auto idcounts = Compound();
+      auto d = Compound();
+      d->set(u8"map", Int(*maxMapNumber));
+      idcounts->set(u8"data", d);
+      idcounts->set(u8"DataVersion", Int(kJavaDataVersion));
+      auto path = root / "data" / "idcounts.dat";
+      auto s = std::make_shared<mcfile::stream::GzFileOutputStream>(path);
+      if (!CompoundTag::Write(*idcounts, s, mcfile::Encoding::Java)) {
+        return JE2BE_ERROR;
+      }
     }
   }
 
@@ -642,12 +667,26 @@ Status Context::exportPoi(std::filesystem::path const &root) const {
     mcfile::Dimension d = it.first;
     PoiBlocks const &poi = it.second;
     fs::path dir;
-    if (d == mcfile::Dimension::Overworld) {
-      dir = root / "poi";
-    } else if (d == mcfile::Dimension::Nether) {
-      dir = root / "DIM-1" / "poi";
+    if constexpr (kJavaDataVersion >= 4903) {
+      auto base = root / u8"dimensions" / u8"minecraft";
+      switch (d) {
+      case mcfile::Dimension::Overworld:
+        dir = base / u8"overworld" / "poi";
+        break;
+      case mcfile::Dimension::Nether:
+        dir = base / u8"the_nether" / "poi";
+        break;
+      default:
+        continue;
+      }
     } else {
-      continue;
+      if (d == mcfile::Dimension::Overworld) {
+        dir = root / "poi";
+      } else if (d == mcfile::Dimension::Nether) {
+        dir = root / "DIM-1" / "poi";
+      } else {
+        continue;
+      }
     }
     if (!poi.write(dir, kJavaDataVersion)) {
       return JE2BE_ERROR;

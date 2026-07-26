@@ -1,5 +1,6 @@
 #pragma once
 
+#include "_data-version.hpp"
 #include "bedrock/_constants.hpp"
 
 namespace je2be {
@@ -62,7 +63,11 @@ public:
       if (o.fBonusChestEnabled) {
         worldGenSettings->set(u8"bonus_chest", Bool(*o.fBonusChestEnabled));
       }
-      worldGenSettings->set(u8"generate_features", Bool(true));
+      if constexpr (kJavaDataVersion >= 4903) {
+        worldGenSettings->set(u8"generate_structures", Bool(true));
+      } else {
+        worldGenSettings->set(u8"generate_features", Bool(true));
+      }
       if (o.fRandomSeed) {
         worldGenSettings->set(u8"seed", Long(*o.fRandomSeed));
         auto dimensions = Compound();

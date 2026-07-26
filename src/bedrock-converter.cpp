@@ -4,6 +4,7 @@
 #include <je2be/bedrock/progress.hpp>
 #include <je2be/nbt.hpp>
 
+#include "_data-version.hpp"
 #include "_props.hpp"
 #include "_queue2d.hpp"
 #include "_walk.hpp"
@@ -187,6 +188,101 @@ public:
 
     LevelData::UpdateDataPacksAndEnabledFeatures(*levelDat, *bin);
 
+    if constexpr (kJavaDataVersion >= 4903) {
+      if (auto data = levelDat->compoundTag(u8"Data"); data) {
+        data->erase(u8"Player");
+
+        auto dataDir = output / u8"data" / u8"minecraft";
+        error_code ec;
+        fs::create_directories(dataDir, ec);
+
+        // Move WorldGenSettings to data/minecraft/world_gen_settings.dat
+        if (auto wgs = data->compoundTag(u8"WorldGenSettings"); wgs) {
+          data->erase(u8"WorldGenSettings");
+          auto wgsTag = Compound();
+          wgsTag->set(u8"data", wgs);
+          wgsTag->set(u8"DataVersion", Int(kJavaDataVersion));
+          auto s = make_shared<mcfile::stream::GzFileOutputStream>(dataDir / u8"world_gen_settings.dat");
+          if (!CompoundTag::Write(*wgsTag, s, mcfile::Encoding::Java)) {
+            return JE2BE_ERROR;
+          }
+        }
+
+        // Remove GameRules from level.dat
+        data->erase(u8"GameRules");
+
+        // Move weather data to data/minecraft/weather.dat
+        {
+          auto weather = Compound();
+          weather->set(u8"rain_time", Int(data->int32(u8"rainTime", 0)));
+          weather->set(u8"raining", Bool(data->boolean(u8"raining", false)));
+          weather->set(u8"thundering", Bool(data->boolean(u8"thundering", false)));
+          weather->set(u8"thunder_time", Int(data->int32(u8"thunderTime", 0)));
+          weather->set(u8"clear_weather_time", Int(0));
+          data->erase(u8"rainTime");
+          data->erase(u8"raining");
+          data->erase(u8"thunderTime");
+          data->erase(u8"thundering");
+          auto weatherTag = Compound();
+          weatherTag->set(u8"data", weather);
+          weatherTag->set(u8"DataVersion", Int(kJavaDataVersion));
+          auto s = make_shared<mcfile::stream::GzFileOutputStream>(dataDir / u8"weather.dat");
+          if (!CompoundTag::Write(*weatherTag, s, mcfile::Encoding::Java)) {
+            return JE2BE_ERROR;
+          }
+        }
+
+        // Move time data to data/minecraft/world_clocks.dat
+        {
+          auto time = data->int64(u8"Time", 0);
+          auto dayTime = data->int64(u8"DayTime", 0);
+          auto clocks = Compound();
+          auto overworld = Compound();
+          overworld->set(u8"total_ticks", Long(time));
+          clocks->set(u8"minecraft:overworld", overworld);
+          auto end = Compound();
+          end->set(u8"total_ticks", Long(dayTime));
+          clocks->set(u8"minecraft:the_end", end);
+          auto nether = Compound();
+          nether->set(u8"total_ticks", Long(0));
+          clocks->set(u8"minecraft:the_nether", nether);
+          data->erase(u8"DayTime");
+          auto clocksTag = Compound();
+          clocksTag->set(u8"data", clocks);
+          clocksTag->set(u8"DataVersion", Int(kJavaDataVersion));
+          auto s = make_shared<mcfile::stream::GzFileOutputStream>(dataDir / u8"world_clocks.dat");
+          if (!CompoundTag::Write(*clocksTag, s, mcfile::Encoding::Java)) {
+            return JE2BE_ERROR;
+          }
+        }
+
+        // Convert Difficulty/hardcore to difficulty_settings
+        {
+          auto ds = Compound();
+          auto difficultyName = [&]() -> std::u8string {
+            switch (data->byte(u8"Difficulty", 2)) {
+            case 0: return u8"peaceful";
+            case 1: return u8"easy";
+            case 2: return u8"normal";
+            case 3: return u8"hard";
+            default: return u8"normal";
+            }
+          }();
+          ds->set(u8"difficulty", difficultyName);
+          ds->set(u8"hardcore", Bool(data->boolean(u8"hardcore", false)));
+          ds->set(u8"locked", Bool(false));
+          data->set(u8"difficulty_settings", ds);
+          data->erase(u8"Difficulty");
+          data->erase(u8"hardcore");
+        }
+
+        // Add singleplayer_uuid from local player
+        if (resolvedLocalPlayerUuid) {
+          data->set(u8"singleplayer_uuid", resolvedLocalPlayerUuid->toIntArrayTag());
+        }
+      }
+    }
+
     if (!LevelData::Write(*levelDat, output / "level.dat")) {
       return JE2BE_ERROR;
     }
@@ -200,7 +296,13 @@ public:
     }
 
     if (!playerData.empty()) {
-      auto playerDataDirectory = output / "playerdata";
+      auto playerDataDirectory = [&]() -> fs::path {
+        if constexpr (kJavaDataVersion >= 4903) {
+          return output / u8"players" / u8"data";
+        } else {
+          return output / "playerdata";
+        }
+      }();
       error_code ec;
       fs::create_directories(playerDataDirectory, ec);
       if (ec) {
@@ -518,17 +620,33 @@ private:
         int rz = region.fZ;
 
         fs::path directory;
-        switch (dim) {
-        case mcfile::Dimension::Nether:
-          directory = output / "DIM-1" / "region";
-          break;
-        case mcfile::Dimension::End:
-          directory = output / "DIM1" / "region";
-          break;
-        case mcfile::Dimension::Overworld:
-        default:
-          directory = output / "region";
-          break;
+        if constexpr (kJavaDataVersion >= 4903) {
+          auto base = output / u8"dimensions" / u8"minecraft";
+          switch (dim) {
+          case mcfile::Dimension::Nether:
+            directory = base / u8"the_nether" / u8"region";
+            break;
+          case mcfile::Dimension::End:
+            directory = base / u8"the_end" / u8"region";
+            break;
+          case mcfile::Dimension::Overworld:
+          default:
+            directory = base / u8"overworld" / u8"region";
+            break;
+          }
+        } else {
+          switch (dim) {
+          case mcfile::Dimension::Nether:
+            directory = output / "DIM-1" / "region";
+            break;
+          case mcfile::Dimension::End:
+            directory = output / "DIM1" / "region";
+            break;
+          case mcfile::Dimension::Overworld:
+          default:
+            directory = output / "region";
+            break;
+          }
         }
 
         auto found = terrainTempDirs.find(dim);

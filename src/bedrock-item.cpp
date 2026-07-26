@@ -342,6 +342,44 @@ public:
     return nameJ;
   }
 
+  static std::u8string Shield(std::u8string const &nameB, CompoundTag const &itemB, CompoundTag &itemJ, Context &ctx, int dataVersion, Options const &opt) {
+    auto tagB = itemB.compoundTag(u8"tag");
+    if (tagB) {
+      auto baseB = tagB->int32(u8"Base");
+      if (baseB) {
+        BannerColorCodeBedrock bccb = static_cast<BannerColorCodeBedrock>(*baseB);
+        ColorCodeJava ccj = ColorCodeJavaFromBannerColorCodeBedrock(bccb);
+        java::AppendComponent(itemJ, u8"base_color", String(JavaNameFromColorCodeJava(ccj)));
+      }
+      auto patternsB = tagB->listTag(u8"Patterns");
+      if (patternsB) {
+        auto patternsJ = List<Tag::Type::Compound>();
+        for (auto const &it : *patternsB) {
+          auto patternB = it->asCompound();
+          if (!patternB) {
+            continue;
+          }
+          auto patternColorB = patternB->int32(u8"Color");
+          auto patternStringB = patternB->string(u8"Pattern");
+          if (!patternColorB || !patternStringB) {
+            continue;
+          }
+          auto patternJ = Compound();
+          BannerColorCodeBedrock bccb2 = static_cast<BannerColorCodeBedrock>(*patternColorB);
+          ColorCodeJava ccj2 = ColorCodeJavaFromBannerColorCodeBedrock(bccb2);
+          patternJ->set(u8"color", String(JavaNameFromColorCodeJava(ccj2)));
+          patternJ->set(u8"pattern", String(Wrap(Banner::JavaPatternFromBedrockOrLegacyJava(*patternStringB), *patternStringB)));
+
+          patternsJ->push_back(patternJ);
+        }
+        if (!patternsJ->empty()) {
+          java::AppendComponent(itemJ, u8"banner_patterns", patternsJ);
+        }
+      }
+    }
+    return nameB;
+  }
+
   static std::u8string Bed(std::u8string const &name, CompoundTag const &itemB, CompoundTag &itemJ, Context &ctx, int dataVersion, Options const &opt) {
     auto damage = itemB.int16(u8"Damage", 0);
     ColorCodeJava ccj = static_cast<ColorCodeJava>(damage);
@@ -1155,6 +1193,7 @@ public:
     E(firework_star, FireworkStar);
     E(fireworkscharge, FireworkStar); // legacy
     E(banner, Banner);
+    E(shield, Shield);
     E(skull, Skull);
     E(sign, Rename(u8"oak_sign"));              // legacy
     E(darkoak_sign, Rename(u8"dark_oak_sign")); // legacy
