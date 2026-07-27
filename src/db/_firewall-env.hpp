@@ -3,25 +3,25 @@
 #if __has_include(<leveldb/env.h>)
 #include <leveldb/env.h>
 
+#include <algorithm>
+#include <cwctype>
+
 namespace je2be {
 
 class FirewallEnv : public leveldb::Env {
+  using Str = std::filesystem::path::string_type;
+
 public:
   explicit FirewallEnv(std::filesystem::path const &allowedDirectory) : fE(nullptr) {
     namespace fs = std::filesystem;
-    fs::path dir = allowedDirectory;
-    dir.make_preferred();
-
-    std::error_code ec;
-    auto canonical = fs::canonical(dir, ec);
-    if (ec) {
+    auto key = FileKey(allowedDirectory);
+    if (!key) {
       return;
     }
-    auto native = canonical.native();
-    if (!native.ends_with(fs::path::preferred_separator)) {
-      native.push_back(fs::path::preferred_separator);
+    if (!key->ends_with(fs::path::preferred_separator)) {
+      key->push_back(fs::path::preferred_separator);
     }
-    fAllowed = native;
+    fAllowed = *key;
     fE = leveldb::Env::Default();
   }
 
@@ -47,6 +47,17 @@ public:
       return fE->NewWritableFile(fname, result);
     } else {
       return IOError();
+    }
+  }
+
+  leveldb::Status NewAppendableFile(std::filesystem::path const &fname, leveldb::WritableFile **result) override {
+    if (!fE) {
+      return IOError("NewAppendableFile: invalid environment");
+    }
+    if (isAllowed(fname)) {
+      return fE->NewAppendableFile(fname, result);
+    } else {
+      return IOError("NewAppendableFile: path is outside allowed directory");
     }
   }
 
@@ -181,27 +192,52 @@ public:
   }
 
 private:
-  static leveldb::Status IOError() {
-    return leveldb::Status::IOError({});
+  static leveldb::Status IOError(std::string const &message = "FirewallEnv") {
+    return leveldb::Status::IOError("FirewallEnv", message);
   }
 
   bool isAllowed(std::filesystem::path const &p) {
     namespace fs = std::filesystem;
+    auto key = FileKey(p);
+    if (!key) {
+      return false;
+    }
+    return key->starts_with(fAllowed);
+  }
 
-    fs::path path = p;
+  static std::optional<Str> FileKey(std::filesystem::path const &p) {
+    namespace fs = std::filesystem;
+    auto path = p;
     path.make_preferred();
 
     std::error_code ec;
     auto canonical = fs::weakly_canonical(path, ec);
     if (ec) {
-      return false;
+      ec.clear();
+      canonical = fs::absolute(path, ec).lexically_normal();
+      if (ec) {
+        return std::nullopt;
+      }
     }
-    return canonical.native().starts_with(fAllowed);
+    Str key = canonical.native();
+#if defined(_WIN32)
+    Str const uncPrefix = LR"(\\?\UNC\)";
+    Str const pathPrefix = LR"(\\?\)";
+    if (key.starts_with(uncPrefix)) {
+      key = LR"(\\)" + key.substr(uncPrefix.size());
+    } else if (key.starts_with(pathPrefix)) {
+      key = key.substr(pathPrefix.size());
+    }
+    std::transform(key.begin(), key.end(), key.begin(), [](wchar_t c) {
+      return std::towlower(c);
+    });
+#endif
+    return key;
   }
 
 private:
   leveldb::Env *fE;
-  std::filesystem::path::string_type fAllowed;
+  Str fAllowed;
 };
 
 } // namespace je2be
