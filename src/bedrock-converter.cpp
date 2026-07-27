@@ -276,6 +276,51 @@ public:
           data->erase(u8"hardcore");
         }
 
+        // Move DragonFight to dimensions/minecraft/the_end/data/minecraft/ender_dragon_fight.dat
+        if (auto dragonFight = data->compoundTag(u8"DragonFight"); dragonFight) {
+          data->erase(u8"DragonFight");
+
+          auto fightJ = Compound();
+
+          CopyBoolValues(*dragonFight, *fightJ, {{u8"DragonKilled", u8"dragon_killed"}, {u8"PreviouslyKilled", u8"previously_killed"}});
+          fightJ->set(u8"needs_state_scanning", Bool(dragonFight->boolean(u8"NeedsStateScanning", false)));
+
+          if (auto dragonUuid = dragonFight->intArrayTag(u8"Dragon"); dragonUuid) {
+            fightJ->set(u8"dragon_uuid", dragonUuid);
+          } else {
+            fightJ->set(u8"needs_state_scanning", Bool(true));
+          }
+
+          if (auto gateways = dragonFight->listTag(u8"Gateways"); gateways) {
+            auto gw = List<Tag::Type::Int>();
+            for (auto const &it : *gateways) {
+              auto v = it->asInt();
+              if (v) {
+                gw->push_back(Int(v->fValue));
+              }
+            }
+            fightJ->set(u8"gateways", gw);
+          }
+
+          if (auto exitPortal = dragonFight->compoundTag(u8"ExitPortalLocation"); exitPortal) {
+            Pos3i pos(exitPortal->int32(u8"X", 0), exitPortal->int32(u8"Y", 0), exitPortal->int32(u8"Z", 0));
+            fightJ->set(u8"exit_portal_location", IntArrayFromPos3i(pos));
+          }
+
+          fightJ->set(u8"respawn_time", Int(0));
+
+          auto enderDragonFightDir = output / u8"dimensions" / u8"minecraft" / u8"the_end" / u8"data" / u8"minecraft";
+          Fs::CreateDirectories(enderDragonFightDir);
+          auto edfTag = Compound();
+          edfTag->set(u8"data", fightJ);
+          edfTag->set(u8"DataVersion", Int(kJavaDataVersion));
+          auto edfPath = enderDragonFightDir / u8"ender_dragon_fight.dat";
+          auto edfStream = make_shared<mcfile::stream::GzFileOutputStream>(edfPath);
+          if (!CompoundTag::Write(*edfTag, edfStream, mcfile::Encoding::Java)) {
+            return JE2BE_ERROR;
+          }
+        }
+
         // Add singleplayer_uuid from local player
         if (resolvedLocalPlayerUuid) {
           data->set(u8"singleplayer_uuid", resolvedLocalPlayerUuid->toIntArrayTag());
