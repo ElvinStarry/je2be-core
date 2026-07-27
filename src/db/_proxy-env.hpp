@@ -60,34 +60,45 @@ public:
 
   leveldb::Status NewSequentialFile(std::filesystem::path const &fname, leveldb::SequentialFile **result) override {
     if (!fE) {
-      return IOError();
+      return IOError("NewSequentialFile: invalid environment");
     }
     if (auto path = prepareForRead(fname); path) {
       return fE->NewSequentialFile(Path(*path), result);
     } else {
-      return IOError();
+      return IOError("NewSequentialFile: failed to prepare path");
     }
   }
 
   leveldb::Status NewRandomAccessFile(std::filesystem::path const &fname, leveldb::RandomAccessFile **result) override {
     if (!fE) {
-      return IOError();
+      return IOError("NewRandomAccessFile: invalid environment");
     }
     if (auto path = prepareForRead(fname); path) {
       return fE->NewRandomAccessFile(Path(*path), result);
     } else {
-      return IOError();
+      return IOError("NewRandomAccessFile: failed to prepare path");
     }
   }
 
   leveldb::Status NewWritableFile(std::filesystem::path const &fname, leveldb::WritableFile **result) override {
     if (!fE) {
-      return IOError();
+      return IOError("NewWritableFile: invalid environment");
     }
     if (auto path = prepareForWrite(fname); path) {
       return fE->NewWritableFile(Path(*path), result);
     } else {
-      return IOError();
+      return IOError("NewWritableFile: failed to prepare path");
+    }
+  }
+
+  leveldb::Status NewAppendableFile(std::filesystem::path const &fname, leveldb::WritableFile **result) override {
+    if (!fE) {
+      return IOError("NewAppendableFile: invalid environment");
+    }
+    if (auto path = prepareForWrite(fname); path) {
+      return fE->NewAppendableFile(Path(*path), result);
+    } else {
+      return IOError("NewAppendableFile: failed to prepare path");
     }
   }
 
@@ -111,11 +122,11 @@ public:
   leveldb::Status GetChildren(std::filesystem::path const &dir, std::vector<std::filesystem::path> *result) override {
     namespace fs = std::filesystem;
     if (!fE) {
-      return IOError();
+      return IOError("GetChildren: invalid environment");
     }
     auto ret = shouldProtect(dir);
     if (!ret) {
-      return IOError();
+      return IOError("GetChildren: failed to resolve path");
     }
     auto [protect, prefix] = *ret;
     if (!protect) {
@@ -140,11 +151,11 @@ public:
 
   leveldb::Status RemoveFile(std::filesystem::path const &fname) override {
     if (!fE) {
-      return IOError();
+      return IOError("RemoveFile: invalid environment");
     }
     auto ret = shouldProtect(fname);
     if (!ret) {
-      return IOError();
+      return IOError("RemoveFile: failed to resolve path");
     }
     auto [protect, key] = *ret;
     if (!protect) {
@@ -166,11 +177,11 @@ public:
 
   leveldb::Status CreateDir(std::filesystem::path const &dirname) override {
     if (!fE) {
-      return IOError();
+      return IOError("CreateDir: invalid environment");
     }
     auto ret = shouldProtect(dirname);
     if (!ret) {
-      return IOError();
+      return IOError("CreateDir: failed to resolve path");
     }
     auto [protect, _] = *ret;
     if (!protect) {
@@ -182,11 +193,11 @@ public:
   leveldb::Status RemoveDir(std::filesystem::path const &dirname) override {
     namespace fs = std::filesystem;
     if (!fE) {
-      return IOError();
+      return IOError("RemoveDir: invalid environment");
     }
     auto ret = shouldProtect(dirname);
     if (!ret) {
-      return IOError();
+      return IOError("RemoveDir: failed to resolve path");
     }
     auto [protect, prefix] = *ret;
     if (!protect) {
@@ -198,7 +209,7 @@ public:
     std::lock_guard<std::mutex> lock(fMut);
     for (auto const &it : fFiles) {
       if (it.first.starts_with(prefix)) {
-        return IOError();
+        return IOError("RemoveDir: directory is not empty");
       }
     }
     return leveldb::Status::OK();
@@ -206,26 +217,26 @@ public:
 
   leveldb::Status GetFileSize(std::filesystem::path const &fname, uint64_t *file_size) override {
     if (!fE) {
-      return IOError();
+      return IOError("GetFileSize: invalid environment");
     }
     if (auto p = prepareForRead(fname); p) {
       return fE->GetFileSize(Path(*p), file_size);
     } else {
-      return IOError();
+      return IOError("GetFileSize: failed to prepare path");
     }
   }
 
   leveldb::Status RenameFile(std::filesystem::path const &src, std::filesystem::path const &target) override {
     if (!fE) {
-      return IOError();
+      return IOError("RenameFile: invalid environment");
     }
     auto retSrc = shouldProtect(src);
     if (!retSrc) {
-      return IOError();
+      return IOError("RenameFile: failed to resolve source path");
     }
     auto retDest = shouldProtect(target);
     if (!retDest) {
-      return IOError();
+      return IOError("RenameFile: failed to resolve target path");
     }
     auto [protectSrc, keySrc] = *retSrc;
     auto [protectDest, keyDest] = *retDest;
@@ -234,24 +245,24 @@ public:
     }
     auto actualSrc = prepareForRead(src);
     if (!actualSrc) {
-      return IOError();
+      return IOError("RenameFile: failed to prepare source path");
     }
     auto actualDest = prepareForWrite(target);
     if (!actualDest) {
-      return IOError();
+      return IOError("RenameFile: failed to prepare target path");
     }
     mcfile::ScopedFile fileSrc(mcfile::File::Open(*actualSrc, mcfile::File::Mode::Read));
     if (!fileSrc) {
-      return IOError();
+      return IOError("RenameFile: failed to open source file");
     }
     mcfile::ScopedFile fileDest(mcfile::File::Open(*actualDest, mcfile::File::Mode::Write));
     if (!fileDest) {
-      return IOError();
+      return IOError("RenameFile: failed to open target file");
     }
     if (!FileCopy(fileSrc.get(), fileDest.get())) {
       fileDest.close();
       RemoveSilent(*actualDest);
-      return IOError();
+      return IOError("RenameFile: failed to copy file");
     }
     fileSrc.close();
     if (protectSrc) {
@@ -267,18 +278,19 @@ public:
 
   leveldb::Status LockFile(std::filesystem::path const &fname, leveldb::FileLock **lock) override {
     if (!fE) {
-      return IOError();
+      return IOError("LockFile: invalid environment");
     }
-    auto actual = prepareForWrite(fname);
+    std::string error;
+    auto actual = prepareForWrite(fname, &error);
     if (!actual) {
-      return IOError();
+      return IOError("LockFile: " + error);
     }
     return fE->LockFile(Path(*actual), lock);
   }
 
   leveldb::Status UnlockFile(leveldb::FileLock *lock) override {
     if (!fE) {
-      return IOError();
+      return IOError("UnlockFile: invalid environment");
     }
     return fE->UnlockFile(lock);
   }
@@ -298,16 +310,16 @@ public:
   }
 
   leveldb::Status GetTestDirectory(std::filesystem::path *path) override {
-    return IOError();
+    return IOError("GetTestDirectory: unsupported");
   }
 
   leveldb::Status NewLogger(std::filesystem::path const &fname, leveldb::Logger **result) override {
     if (!fE) {
-      return IOError();
+      return IOError("NewLogger: invalid environment");
     }
     auto actual = prepareForWrite(fname);
     if (!actual) {
-      return IOError();
+      return IOError("NewLogger: failed to prepare path");
     }
     return fE->NewLogger(Path(*actual), result);
   }
@@ -331,18 +343,25 @@ public:
   }
 
 private:
-  static leveldb::Status IOError() {
-    return leveldb::Status::IOError({});
+  static leveldb::Status IOError(std::string const &message = "ProxyEnv") {
+    return leveldb::Status::IOError("ProxyEnv", message);
   }
 
-  static std::optional<Str> FileKey(std::filesystem::path const &p) {
+  static std::optional<Str> FileKey(std::filesystem::path const &p, std::error_code *outError = nullptr) {
     namespace fs = std::filesystem;
     auto path = p;
     path.make_preferred();
     std::error_code ec;
     auto canonical = fs::weakly_canonical(path, ec);
     if (ec) {
-      return std::nullopt;
+      ec.clear();
+      canonical = fs::absolute(path, ec).lexically_normal();
+      if (ec) {
+        if (outError) {
+          *outError = ec;
+        }
+        return std::nullopt;
+      }
     }
     return canonical.native();
   }
@@ -354,34 +373,37 @@ private:
 
   std::optional<std::filesystem::path> unsafePrepareForRead(std::filesystem::path const &p) {
     auto ret = shouldProtect(p);
-    auto [protect, key] = *ret;
-    if (!protect) {
+    if (!ret) {
       return std::nullopt;
     }
-    if (protect) {
-      if (auto found = fFiles.find(key); found != fFiles.end()) {
-        if (found->second.fActual) {
-          return found->second.fActual;
-        } else {
-          return p;
-        }
+    auto [protect, key] = *ret;
+    if (!protect) {
+      return p;
+    }
+    if (auto found = fFiles.find(key); found != fFiles.end()) {
+      if (found->second.fActual) {
+        return found->second.fActual;
       } else {
-        return std::nullopt;
+        return p;
       }
     } else {
-      return p;
+      return std::nullopt;
     }
   }
 
-  std::optional<std::filesystem::path> prepareForWrite(std::filesystem::path const &p) {
+  std::optional<std::filesystem::path> prepareForWrite(std::filesystem::path const &p, std::string *error = nullptr) {
     std::lock_guard<std::mutex> lock(fMut);
-    return unsafePrepareForWrite(p);
+    return unsafePrepareForWrite(p, error);
   }
 
-  std::optional<std::filesystem::path> unsafePrepareForWrite(std::filesystem::path const &p) {
+  std::optional<std::filesystem::path> unsafePrepareForWrite(std::filesystem::path const &p, std::string *error = nullptr) {
     namespace fs = std::filesystem;
-    auto ret = shouldProtect(p);
+    std::error_code ec;
+    auto ret = shouldProtect(p, &ec);
     if (!ret) {
+      if (error) {
+        *error = "failed to resolve path: " + ec.message();
+      }
       return std::nullopt;
     }
     auto [protect, key] = *ret;
@@ -403,10 +425,16 @@ private:
       auto path = nextProxyPath(p);
       mcfile::ScopedFile src(mcfile::File::Open(p, mcfile::File::Mode::Read));
       if (!src) {
+        if (error) {
+          *error = "failed to open source file";
+        }
         return std::nullopt;
       }
       mcfile::ScopedFile dest(mcfile::File::Open(path, mcfile::File::Mode::Write));
       if (!dest) {
+        if (error) {
+          *error = "failed to create proxy file";
+        }
         return std::nullopt;
       }
       std::vector<uint8_t> buffer(4096);
@@ -415,6 +443,9 @@ private:
         if (fwrite(buffer.data(), 1, read, dest.get()) != read) {
           dest.close();
           RemoveSilent(path);
+          if (error) {
+            *error = "failed to copy source file";
+          }
           return std::nullopt;
         }
       }
@@ -424,8 +455,8 @@ private:
     }
   }
 
-  std::optional<std::pair<bool, Str>> shouldProtect(std::filesystem::path const &p) const {
-    auto key = FileKey(p);
+  std::optional<std::pair<bool, Str>> shouldProtect(std::filesystem::path const &p, std::error_code *outError = nullptr) const {
+    auto key = FileKey(p, outError);
     if (!key) {
       return std::nullopt;
     }

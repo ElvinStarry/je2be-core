@@ -71,7 +71,7 @@ public:
 
         auto b = mcfile::be::Chunk::Load(cx, cz, d, *db, ctx->fEncoding);
         if (!b) {
-          continue;
+          return JE2BE_ERROR_WHAT("Failed to load Bedrock chunk [" + std::to_string(cx) + ", " + std::to_string(cz) + "] in dimension " + std::to_string(static_cast<int>(d)));
         }
         cache->set(cx, cz, b);
 

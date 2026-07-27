@@ -3,6 +3,7 @@ TEST_CASE("end-gateway") {
     fs::path thisFile(__FILE__);
     auto mcworld = thisFile.parent_path() / "data" / "end-gateway" / "bedrock" / "end-gateway.mcworld";
     auto tmp = mcfile::File::CreateTempDir(fs::temp_directory_path());
+    REQUIRE(tmp);
     defer {
       fs::remove_all(*tmp);
     };
@@ -14,11 +15,20 @@ TEST_CASE("end-gateway") {
     opt.fChunkFilter.insert({-5, -4});
     opt.fChunkFilter.insert({-51, -39});
     auto st = bedrock::Converter::Run(in, out, opt, thread::hardware_concurrency());
-    CHECK(st.ok());
-    mcfile::je::World world(out / "DIM1");
+    std::string errorMessage;
+    if (auto error = st.error(); error) {
+      errorMessage = error->fWhat;
+    }
+    REQUIRE_MESSAGE(st.ok(), errorMessage);
+
+    auto endDirectory = out / "dimensions" / "minecraft" / "the_end";
+    REQUIRE(fs::is_directory(endDirectory / "region"));
+    CHECK_FALSE(fs::exists(out / "DIM1"));
+    mcfile::je::World world(endDirectory);
     {
       auto chunk = world.chunkAt(-5, -4);
       REQUIRE(chunk);
+      CHECK(chunk->status() == mcfile::je::Chunk::Status::FULL);
       auto block = chunk->blockAt(-77, 75, -56);
       REQUIRE(block);
       CHECK(block->fId == mcfile::blocks::minecraft::end_gateway);
@@ -35,6 +45,7 @@ TEST_CASE("end-gateway") {
     {
       auto chunk = world.chunkAt(-51, -39);
       REQUIRE(chunk);
+      CHECK(chunk->status() == mcfile::je::Chunk::Status::FULL);
       auto block = chunk->blockAt(-814, 69, -613);
       REQUIRE(block);
       CHECK(block->fId == mcfile::blocks::minecraft::end_gateway);

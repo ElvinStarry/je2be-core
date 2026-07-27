@@ -67,6 +67,7 @@ public:
       return JE2BE_ERROR;
     }
     leveldb::Options o;
+    o.compression = leveldb::kZlibRawCompression;
     o.env = closer->fProxy.get();
     leveldb::DB *dbPtr = nullptr;
     if (auto st = leveldb::DB::Open(o, db, &dbPtr); !st.ok()) {
