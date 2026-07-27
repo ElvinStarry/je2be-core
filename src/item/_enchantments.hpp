@@ -195,6 +195,7 @@ public:
         {u8"minecraft:wind_burst", 38},
         {u8"minecraft:density", 39},
         {u8"minecraft:breach", 40},
+        {u8"minecraft:lunge", 41},
     });
   }
 };

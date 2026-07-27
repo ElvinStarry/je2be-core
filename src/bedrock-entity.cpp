@@ -421,6 +421,15 @@ public:
     j[u8"Temper"] = Int(0);
   }
 
+  static void CamelPose(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    j[u8"LastPoseTick"] = Long(b.boolean(u8"Sitting", false) ? -1 : 0);
+  }
+
+  static void CamelHusk(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    j[u8"Tame"] = Bool(true);
+    CamelPose(b, j, ctx, dataVersion);
+  }
+
   static void Cat(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     using Cat = je2be::Cat;
 
@@ -1097,6 +1106,53 @@ public:
       }
       j[u8"sound_variant"] = String(Namespace::Add(soundVariant));
     }
+  }
+
+  static void SoundVariant(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    if (auto soundVariantB = GetProperty<StringTag>(b, u8"minecraft:sound_variant"); soundVariantB) {
+      std::u8string soundVariant = Namespace::Remove(soundVariantB->fValue);
+      if (soundVariant == u8"default") {
+        soundVariant = u8"classic";
+      }
+      j[u8"sound_variant"] = String(Namespace::Add(soundVariant));
+    }
+  }
+
+  static void SulfurCubeEntity(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    Size(b, j, ctx, dataVersion);
+    j[u8"from_bucket"] = Bool(!b.boolean(u8"NaturalSpawn", true));
+    j[u8"fuse"] = Int(HasDefinition(b, u8"+minecraft:sulfur_cube_medium_primed") || HasDefinition(b, u8"+minecraft:sulfur_cube_medium_primed_by_explosion") ? 120 : -1);
+    j[u8"pickup_timer"] = Int(HasDefinition(b, u8"+minecraft:sulfur_cube_medium_without_block_pickup_timeout") ? 100 : 0);
+    j[u8"wasOnGround"] = Bool(b.boolean(u8"OnGround", false));
+
+    auto equipment = j.compoundTag(u8"equipment");
+    if (equipment) {
+      if (auto content = equipment->compoundTag(u8"mainhand"); content && content->int32(u8"count", content->byte(u8"Count", 0)) > 0) {
+        equipment->erase(u8"mainhand");
+        equipment->set(u8"body", content);
+      }
+      if (equipment->empty()) {
+        j.erase(u8"equipment");
+      }
+    }
+
+    if (auto dropChances = j.compoundTag(u8"drop_chances"); dropChances) {
+      if (auto mainhand = dropChances->get<FloatTag>(u8"mainhand"); mainhand) {
+        dropChances->erase(u8"mainhand");
+        dropChances->set(u8"body", mainhand);
+      }
+      if (dropChances->empty()) {
+        j.erase(u8"drop_chances");
+      }
+    }
+  }
+
+  static void ZombieNautilus(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    std::u8string variant = u8"temperate";
+    if (auto variantB = GetProperty<StringTag>(b, u8"minecraft:variant"); variantB && Namespace::Remove(variantB->fValue) == u8"coral") {
+      variant = u8"warm";
+    }
+    j[u8"variant"] = String(Namespace::Add(variant));
   }
 
   static void Zombie(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
@@ -1981,6 +2037,8 @@ public:
     HurtTime(b, j, ctx, dataVersion);
     LeftHanded(b, j, ctx, dataVersion);
     PersistenceRequiredDefault(b, j, ctx, dataVersion);
+    CopyIntValues(b, j, {{u8"Age"}});
+    CopyBoolValues(b, j, {{u8"GrowthPaused", u8"AgeLocked"}});
     return ret;
   }
 #pragma endregion
@@ -2554,7 +2612,7 @@ public:
     E(bat, C(Same, LivingEntity, Bat));
     E(painting, C(Same, Base, Painting));
     E(zombie, C(Same, LivingEntity, IsBaby, CanBreakDoors, Zombie));
-    E(chicken, C(Same, Animal, ClimateVariant, Chicken));
+    E(chicken, C(Same, Animal, ClimateVariant, Chicken, SoundVariant));
     E(item, C(Same, Base, Impl::Item));
     E(armor_stand, C(Same, Base, AbsorptionAmount, ArmorItems, Brain, DeathTime, FallFlying, HandItems, Health, HurtByTimestamp, HurtTime, ArmorStand));
     E(ender_crystal, C(Rename(u8"end_crystal"), Base, ShowBottom, EnderCrystal));
@@ -2569,11 +2627,11 @@ public:
     E(zombie_pigman, C(Rename(u8"zombified_piglin"), LivingEntity, AngerTime, IsBaby, CanBreakDoors, Zombie, ZombifiedPiglin));
     E(bee, C(Same, Animal, AngerTime, NoGravity, Bee));
     E(blaze, C(Same, LivingEntity));
-    E(cow, C(Same, Animal, ClimateVariant));
+    E(cow, C(Same, Animal, ClimateVariant, SoundVariant));
     E(elder_guardian, C(Same, LivingEntity, ElderGuardian));
     E(cod, C(Same, LivingEntity, FromBucket));
     E(fox, C(Same, Animal, Sitting, Fox));
-    E(pig, C(Same, Animal, Saddle, ClimateVariant));
+    E(pig, C(Same, Animal, Saddle, ClimateVariant, SoundVariant));
     E(zoglin, C(Same, LivingEntity, IsBaby));
     E(horse, C(Same, Animal, Bred, EatingHaystack, Tame, Temper, HealthWithCustomizedMax, JumpStrength, MovementSpeed, BodyEquipmentFromArmorItems, Horse));
     E(husk, C(Same, LivingEntity, IsBaby, CanBreakDoors, Zombie));
@@ -2583,7 +2641,7 @@ public:
     E(drowned, C(Same, LivingEntity, IsBaby, CanBreakDoors, Zombie));
     E(endermite, C(Same, LivingEntity, Endermite));
     E(evocation_illager, C(Rename(u8"evoker"), LivingEntity, CanJoinRaid, PatrolLeader, Patrolling, Wave, Evoker));
-    E(cat, C(Same, Animal, CollarColor, Sitting, Cat));
+    E(cat, C(Same, Animal, CollarColor, Sitting, Cat, SoundVariant));
     E(guardian, C(Same, LivingEntity));
     E(llama, C(LlamaName, Animal, Bred, ChestedHorse, EatingHaystack, ItemsWithDecorItem, Tame, Temper, CopyVariant, Strength, BodyEquipmentFromArmorItems, Llama));
     E(trader_llama, C(Same, Animal, Bred, ChestedHorse, EatingHaystack, ItemsWithDecorItem, Tame, Temper, CopyVariant, Strength, BodyEquipmentFromArmorItems, Llama));
@@ -2633,7 +2691,7 @@ public:
     E(allay, C(Same, LivingEntity, NoGravity, Inventory, Allay));
     E(tadpole, C(Same, LivingEntity, AgeableE(24000), FromBucket));
 
-    E(camel, C(Same, Animal, Bred, SaddleItemFromChestItems, Tame, Camel));
+    E(camel, C(Same, Animal, Bred, SaddleItemFromChestItems, Tame, Camel, CamelPose));
     E(sniffer, C(Same, Animal));
     E(ocelot, C(Same, Animal, Age, Ocelot));
     E(vindicator, C(Same, LivingEntity));
@@ -2648,6 +2706,13 @@ public:
 
     E(happy_ghast, C(Same, LivingEntity, Age, InLove, HappyGhast));
     E(copper_golem, C(Same, LivingEntity, CopperGolem));
+
+    // 1.21.11 - 26.2
+    E(camel_husk, C(Same, LivingEntity, Bred, EatingHaystack, Temper, SaddleItemFromChestItems, Owner, CamelHusk));
+    E(nautilus, C(Same, Animal, Sitting, BodyEquipmentFromArmorItems, SaddleItemFromChestItems));
+    E(parched, C(Same, LivingEntity));
+    E(sulfur_cube, C(Same, LivingEntity, SulfurCubeEntity));
+    E(zombie_nautilus, C(Same, LivingEntity, Owner, Sitting, BodyEquipmentFromArmorItems, SaddleItemFromChestItems, ZombieNautilus));
 #undef E
     return ret;
   }

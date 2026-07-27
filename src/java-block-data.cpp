@@ -2022,6 +2022,42 @@ public:
     E(waxed_exposed_copper_golem_statue, cardinalDirectionFromFacing4);
     E(waxed_weathered_copper_golem_statue, cardinalDirectionFromFacing4);
     E(waxed_oxidized_copper_golem_statue, cardinalDirectionFromFacing4);
+
+    // 26.2
+    E(chiseled_cinnabar, Identity);
+    E(chiseled_sulfur, Identity);
+    E(cinnabar, Identity);
+    E(cinnabar_bricks, Identity);
+    E(golden_dandelion, Identity);
+    E(polished_cinnabar, Identity);
+    E(polished_sulfur, Identity);
+    E(sulfur, Identity);
+    E(sulfur_bricks, Identity);
+
+    E(cinnabar_slab, Slab(u8"cinnabar_double_slab"));
+    E(cinnabar_brick_slab, Slab(u8"cinnabar_brick_double_slab"));
+    E(polished_cinnabar_slab, Slab(u8"polished_cinnabar_double_slab"));
+    E(sulfur_slab, Slab(u8"sulfur_double_slab"));
+    E(sulfur_brick_slab, Slab(u8"sulfur_brick_double_slab"));
+    E(polished_sulfur_slab, Slab(u8"polished_sulfur_double_slab"));
+
+    E(cinnabar_stairs, Stairs());
+    E(cinnabar_brick_stairs, Stairs());
+    E(polished_cinnabar_stairs, Stairs());
+    E(sulfur_stairs, Stairs());
+    E(sulfur_brick_stairs, Stairs());
+    E(polished_sulfur_stairs, Stairs());
+
+    E(cinnabar_wall, wall);
+    E(cinnabar_brick_wall, wall);
+    E(polished_cinnabar_wall, wall);
+    E(sulfur_wall, wall);
+    E(sulfur_brick_wall, wall);
+    E(polished_sulfur_wall, wall);
+
+    E(potent_sulfur, Converter(Same, Name(StringProperty(u8"potent_sulfur_state", u8"dry"), u8"potent_sulfur_state")));
+    E(sulfur_spike, PointedDripstone);
+    E(potted_golden_dandelion, pottedFlowerPot);
 #undef E
 
     return table;
@@ -2479,7 +2515,7 @@ public:
   }
 
   static CompoundTagPtr PointedDripstone(Block const &b, CompoundTagConstPtr const &, Options const &o) {
-    auto c = New(u8"pointed_dripstone");
+    auto c = New(b.fName, true);
     auto s = States();
     auto thickness = b.property(u8"thickness", u8"tip");
     if (thickness == u8"tip_merge") {

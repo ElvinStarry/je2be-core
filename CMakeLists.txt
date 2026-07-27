@@ -41,7 +41,12 @@ CPMAddPackage(
   NAME libminecraft-file
   GITHUB_REPOSITORY kbinani/libminecraft-file
   GIT_TAG 6f00d2c6c06b400424b5418193410bfbc0fe76bf
-  PATCHES cmake/patches/libminecraft-file-mca-write-error.patch)
+  PATCH_COMMAND
+    ${CMAKE_COMMAND}
+    -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+    -DSOURCE_DIR=<SOURCE_DIR>
+    -DPATCH_FILES=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/libminecraft-file-mca-write-error.patch\;${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/libminecraft-file-26.2-blocks.patch
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-patches.cmake)
 
 CPMAddPackage(
   NAME defer
@@ -277,6 +282,7 @@ set(je2be_src_files
   src/entity/_frog.hpp
   src/entity/_painting.hpp
   src/entity/_panda.hpp
+  src/entity/_sulfur-cube.hpp
   src/entity/_tropical-fish.hpp
   src/entity/_wolf.hpp
   src/enums/_banner-color-code-bedrock.hpp
@@ -447,7 +453,8 @@ set(test_files
   test/bedrock-legacy-block.test.hpp
   test/bedrock-java-player.test.hpp
   test/parallel.test.hpp
-  test/java-uuid-replacer.test.hpp)
+  test/java-uuid-replacer.test.hpp
+  test/new-content-26.2.test.hpp)
 
 if (NOT WIN32)
   list(APPEND je2be_link_libraries pthread)

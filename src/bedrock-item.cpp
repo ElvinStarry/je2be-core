@@ -1020,6 +1020,33 @@ public:
     return name;
   }
 
+  static std::u8string SulfurCubeBucket(std::u8string const &name, CompoundTag const &itemB, CompoundTag &itemJ, Context &ctx, int dataVersion, Options const &opt) {
+    auto tagB = itemB.compoundTag(u8"tag");
+    if (!tagB) {
+      return name;
+    }
+
+    auto entityDataJ = Compound();
+    if (auto health = HealthFromBucketTag(*tagB); health) {
+      entityDataJ->set(u8"Health", Float(*health));
+    }
+    CopyBoolValues(*tagB, *entityDataJ, {{u8"NoAI"}, {u8"Silent"}, {u8"NoGravity"}, {u8"Glowing"}, {u8"Invulnerable"}, {u8"Persistent", u8"PersistenceRequired"}, {u8"GrowthPaused", u8"age_locked"}});
+    CopyIntValues(*tagB, *entityDataJ, {{u8"Age", u8"age"}});
+    if (!entityDataJ->empty()) {
+      java::AppendComponent(itemJ, u8"bucket_entity_data", entityDataJ);
+    }
+
+    if (auto mainhandB = tagB->listTag(u8"Mainhand"); mainhandB && !mainhandB->empty()) {
+      if (auto contentB = mainhandB->at(0)->asCompound(); contentB && contentB->byte(u8"Count", 0) > 0) {
+        if (auto contentJ = Item::From(*contentB, ctx, dataVersion, {}); contentJ && !contentJ->empty()) {
+          contentJ->erase(u8"Slot");
+          java::AppendComponent(itemJ, u8"sulfur_cube_content", contentJ);
+        }
+      }
+    }
+    return name;
+  }
+
   static std::u8string FishBucket(std::u8string const &name, CompoundTag const &itemB, CompoundTag &itemJ, Context &ctx, int dataVersion, Options const &opt) {
     auto tagB = itemB.compoundTag(u8"tag");
     if (tagB) {
@@ -1233,6 +1260,7 @@ public:
     E(arrow, Arrow);
     E(totem, Rename(u8"totem_of_undying")); // legacy
     E(suspicious_stew, SuspiciousStew);
+    E(sulfur_cube_bucket, SulfurCubeBucket);
     E(axolotl_bucket, AxolotlBucket);
     E(crossbow, Crossbow);
     E(lodestone_compass, LodestoneCompass);

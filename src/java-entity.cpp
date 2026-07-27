@@ -15,6 +15,7 @@
 #include "entity/_frog.hpp"
 #include "entity/_painting.hpp"
 #include "entity/_panda.hpp"
+#include "entity/_sulfur-cube.hpp"
 #include "entity/_tropical-fish.hpp"
 #include "entity/_wolf.hpp"
 #include "enums/_color-code-java.hpp"
@@ -588,12 +589,12 @@ private:
     E(bat, C(Mob, Bat));
     E(bee, C(Animal, AgeableA(u8"bee"), Bee));
     M(blaze);
-    E(cat, C(Animal, AgeableA(u8"minecraft:cat"), TameableA(u8"cat"), Sittable, CollarColorable, Cat));
+    E(cat, C(Animal, AgeableA(u8"minecraft:cat"), TameableA(u8"cat"), Sittable, CollarColorable, Cat, SoundVariant));
     M(cave_spider);
-    E(chicken, C(Animal, AgeableA(u8"minecraft:chicken"), Vehicle(), ClimateVariant, Chicken));
+    E(chicken, C(Animal, AgeableA(u8"minecraft:chicken"), Vehicle(), ClimateVariant, Chicken, SoundVariant));
     E(cod, C(Mob, PersistentFromFromBucket));
 
-    E(cow, C(Animal, AgeableA(u8"minecraft:cow"), ClimateVariant));
+    E(cow, C(Animal, AgeableA(u8"minecraft:cow"), ClimateVariant, SoundVariant));
     E(creeper, C(Monster, Creeper));
     E(dolphin, C(Animal, AgeableA(u8"dolphin")));
     E(donkey, C(Animal, TameableB(u8"donkey"), AgeableA(u8"minecraft:donkey"), ChestedHorse(u8"donkey"), Steerable(u8"donkey", {.fAddAlwaysUnsaddledDefinition = false}), Temper));
@@ -618,7 +619,7 @@ private:
     E(panda, C(Animal, AgeableA(u8"minecraft:panda"), Panda));
     E(parrot, C(Animal, TameableA(u8"parrot"), Sittable, Parrot));
     M(phantom);
-    E(pig, C(Animal, AgeableA(u8"minecraft:pig"), Steerable(u8"pig", {.fAddAlwaysUnsaddledDefinition = true}), ClimateVariant));
+    E(pig, C(Animal, AgeableA(u8"minecraft:pig"), Steerable(u8"pig", {.fAddAlwaysUnsaddledDefinition = true}), ClimateVariant, SoundVariant));
     E(piglin, C(Monster, ChestItemsFromInventory, ZombificationSensor, LastHurtByMob, Piglin));
     E(piglin_brute, C(Monster, ZombificationSensor, PiglinBrute));
     E(pillager, C(Monster, CanJoinRaid, ChestItemsFromInventory));
@@ -707,6 +708,13 @@ private:
     E(happy_ghast, C(Animal, HappyGhast));
 
     E(copper_golem, C(Mob, CopperGolem));
+
+    // 1.21.11 - 26.2
+    E(camel_husk, C(Monster, CamelHusk, Temper, Vehicle()));
+    E(nautilus, C(Animal, AgeableA(u8"minecraft:nautilus"), Nautilus, Vehicle()));
+    E(parched, C(Monster, RangedAttack));
+    E(sulfur_cube, C(Monster, SulfurCubeEntity));
+    E(zombie_nautilus, C(Monster, ZombieNautilus, Vehicle()));
 #undef A
 #undef M
 #undef E
@@ -915,6 +923,201 @@ private:
       AddDefinition(c, u8"+minecraft:camel_standing");
     }
     CopyBoolValues(tag, c, {{u8"Tame", u8"IsTamed"}});
+  }
+
+  static bool SaddleToChestItems(CompoundTag &b, CompoundTag const &j, ConverterContext &ctx) {
+    CompoundTagPtr saddleJ;
+    if (auto equipment = j.compoundTag(u8"equipment"); equipment) {
+      saddleJ = equipment->compoundTag(u8"saddle");
+    }
+    if (!saddleJ) {
+      saddleJ = j.compoundTag(u8"SaddleItem");
+    }
+
+    bool saddled = j.boolean(u8"Saddle", false) || (saddleJ && Item::Count(*saddleJ, 0) > 0);
+    if (saddled) {
+      CompoundTagPtr saddleB;
+      if (saddleJ) {
+        saddleB = Item::From(saddleJ, ctx.fCtx, ctx.fDataVersion);
+      }
+      if (!saddleB) {
+        saddleB = Item::Empty();
+        saddleB->set(u8"Name", u8"minecraft:saddle");
+      }
+      AddChestItem(b, saddleB, 0, 1);
+    }
+    b[u8"Saddled"] = Bool(saddled);
+    return saddled;
+  }
+
+  static void CamelHusk(CompoundTag &b, CompoundTag const &j, ConverterContext &ctx) {
+    bool const sitting = j.boolean(u8"Sitting", false) || j.int64(u8"LastPoseTick", 0) < 0;
+    auto owner = GetOwnerUuid(j, ctx);
+    b[u8"Sitting"] = Bool(sitting);
+    b[u8"IsTamed"] = Bool(true);
+    if (owner) {
+      b[u8"OwnerNew"] = Long(*owner);
+    }
+    CopyBoolValues(j, b, {{u8"Bred"}, {u8"EatingHaystack", u8"IsEating"}});
+    AddDefinition(b, sitting ? u8"+minecraft:camel_husk_sitting" : u8"+minecraft:camel_husk_standing");
+    bool hostileRider = false;
+    if (auto passengers = j.listTag(u8"Passengers"); passengers) {
+      for (auto const &passenger : *passengers) {
+        auto passengerTag = passenger->asCompound();
+        auto id = passengerTag ? passengerTag->string(u8"id", u8"") : u8"";
+        if (id == u8"minecraft:husk" || id == u8"minecraft:parched") {
+          hostileRider = true;
+          break;
+        }
+      }
+    }
+    AddDefinition(b, hostileRider ? u8"+minecraft:camel_husk_with_hostile_rider" : u8"+minecraft:camel_husk_with_no_hostile_rider");
+    if (SaddleToChestItems(b, j, ctx)) {
+      AddDefinition(b, u8"+minecraft:camel_husk_saddled");
+    } else {
+      AddDefinition(b, u8"-minecraft:camel_husk_saddled");
+    }
+  }
+
+  static void Nautilus(CompoundTag &b, CompoundTag const &j, ConverterContext &ctx) {
+    bool const baby = j.int32(u8"Age", 0) < 0;
+    auto owner = GetOwnerUuid(j, ctx);
+    bool const saddled = SaddleToChestItems(b, j, ctx);
+    CopyBoolValues(j, b, {{u8"Sitting"}});
+    AddDefinition(b, u8"+minecraft:nautilus_leashable");
+    if (owner) {
+      b[u8"OwnerNew"] = Long(*owner);
+      b[u8"IsTamed"] = Bool(true);
+      AddDefinition(b, u8"+minecraft:nautilus_tame");
+      if (!baby) {
+        AddDefinition(b, u8"+minecraft:nautilus_tame_adult");
+      }
+      AddDefinition(b, saddled ? u8"+minecraft:nautilus_tame_saddled" : u8"+minecraft:nautilus_tame_unsaddled");
+    } else if (!baby) {
+      AddDefinition(b, u8"+minecraft:nautilus_wild_adult_calm");
+    }
+  }
+
+  static void SulfurCubeEntity(CompoundTag &b, CompoundTag const &j, ConverterContext &ctx) {
+    int const sizeJ = std::clamp(j.int32(u8"Size", 0), 0, 1);
+    int const sizeB = sizeJ + 1;
+    bool const baby = sizeJ == 0;
+    b[u8"Size"] = Byte(sizeB);
+    b[u8"Variant"] = Int(sizeB);
+    b[u8"IsBaby"] = Bool(baby);
+    CopyIntValues(j, b, {{u8"Age"}});
+    b[u8"Attributes"] = EntityAttributes::SulfurCube(baby, j.float32(u8"Health")).toBedrockListTag();
+
+    auto fromBucket = j.boolean(u8"from_bucket");
+    if (!fromBucket) {
+      fromBucket = j.boolean(u8"FromBucket");
+    }
+    if (fromBucket) {
+      b[u8"NaturalSpawn"] = Bool(!*fromBucket);
+      if (*fromBucket) {
+        b[u8"Persistent"] = Bool(true);
+      }
+    }
+
+    auto mainhand = List<Tag::Type::Compound>();
+    TagPtr contentTagB;
+    CompoundTag const *contentB = nullptr;
+    if (auto armor = b.listTag(u8"Armor"); armor && armor->size() >= 5) {
+      contentTagB = armor->fValue[4];
+      contentB = contentTagB->asCompound();
+      armor->fValue[4] = Item::Empty();
+    }
+    std::u8string archetype = u8"none";
+    if (!baby && contentB && contentB->byte(u8"Count", 0) > 0) {
+      mainhand->push_back(contentTagB);
+      if (auto equipment = j.compoundTag(u8"equipment"); equipment) {
+        if (auto contentJ = equipment->compoundTag(u8"body"); contentJ) {
+          archetype = SulfurCube::ArchetypeFromJavaItem(contentJ->string(u8"id", u8""));
+        }
+      }
+      AddDefinition(b, u8"+minecraft:sulfur_cube_medium");
+      AddDefinition(b, u8"+minecraft:sulfur_cube_medium_with_block");
+      AddDefinition(b, u8"+minecraft:sulfur_cube_medium_with_block_interactable");
+      if (archetype != u8"none") {
+        AddDefinition(b, u8"+minecraft:sulfur_cube_" + archetype);
+      }
+      auto chances = List<Tag::Type::Compound>();
+      auto chance = Compound();
+      chance->set(u8"DropChance", Float(1));
+      chance->set(u8"Slot", u8"mainhand");
+      chances->push_back(chance);
+      b[u8"SlotDropChances"] = chances;
+    } else {
+      mainhand->push_back(Item::Empty());
+      AddDefinition(b, u8"+minecraft:sulfur_cube_ai");
+      if (baby) {
+        AddDefinition(b, u8"+minecraft:sulfur_cube_small");
+      } else {
+        AddDefinition(b, u8"+minecraft:sulfur_cube_medium");
+        AddDefinition(b, u8"+minecraft:sulfur_cube_medium_without_block");
+        if (j.int32(u8"pickup_timer", 0) > 0) {
+          AddDefinition(b, u8"+minecraft:sulfur_cube_medium_without_block_pickup_timeout");
+        } else {
+          AddDefinition(b, u8"+minecraft:sulfur_cube_medium_without_block_can_pickup");
+        }
+      }
+    }
+    AddDefinition(b, u8"+minecraft:sulfur_cube_without_target");
+    if (j.int32(u8"fuse", -1) >= 0) {
+      AddDefinition(b, u8"+minecraft:sulfur_cube_medium_primed");
+    }
+    b[u8"Mainhand"] = mainhand;
+    auto properties = Compound();
+    properties->set(u8"minecraft:sulfur_cube_archetype", archetype);
+    b[u8"properties"] = properties;
+  }
+
+  static void ZombieNautilus(CompoundTag &b, CompoundTag const &j, ConverterContext &ctx) {
+    auto owner = GetOwnerUuid(j, ctx);
+    bool const saddled = SaddleToChestItems(b, j, ctx);
+    bool const drownedMounted = [&j] {
+      auto passengers = j.listTag(u8"Passengers");
+      if (!passengers) {
+        return false;
+      }
+      for (auto const &passenger : *passengers) {
+        auto passengerTag = passenger->asCompound();
+        if (passengerTag && passengerTag->string(u8"id", u8"") == u8"minecraft:drowned") {
+          return true;
+        }
+      }
+      return false;
+    }();
+    CopyBoolValues(j, b, {{u8"Sitting"}});
+    if (owner) {
+      AddDefinition(b, u8"+minecraft:zombie_nautilus_leashable");
+      AddDefinition(b, u8"+minecraft:zombie_nautilus_tameable");
+      AddDefinition(b, u8"+minecraft:zombie_nautilus_ai_controlled");
+      b[u8"OwnerNew"] = Long(*owner);
+      b[u8"IsTamed"] = Bool(true);
+      AddDefinition(b, u8"+minecraft:zombie_nautilus_tame");
+      AddDefinition(b, u8"+minecraft:zombie_nautilus_tame_unmounted");
+      AddDefinition(b, saddled ? u8"+minecraft:zombie_nautilus_tame_saddled" : u8"+minecraft:zombie_nautilus_tame_unsaddled");
+    } else {
+      AddDefinition(b, u8"+minecraft:zombie_nautilus_wild");
+      if (drownedMounted) {
+        AddDefinition(b, u8"+minecraft:zombie_nautilus_wild_mounted");
+      } else {
+        AddDefinition(b, u8"+minecraft:zombie_nautilus_wild_unmounted");
+        AddDefinition(b, u8"+minecraft:zombie_nautilus_wild_calm");
+        AddDefinition(b, u8"+minecraft:zombie_nautilus_leashable");
+        AddDefinition(b, u8"+minecraft:zombie_nautilus_tameable");
+        AddDefinition(b, u8"+minecraft:zombie_nautilus_ai_controlled");
+      }
+    }
+
+    std::u8string variant = Namespace::Remove(j.string(u8"variant", u8"minecraft:temperate"));
+    auto properties = b.compoundTag(u8"properties");
+    if (!properties) {
+      properties = Compound();
+      b[u8"properties"] = properties;
+    }
+    properties->set(u8"minecraft:variant", variant == u8"warm" ? u8"coral" : u8"default");
   }
 
   static void Cat(CompoundTag &c, CompoundTag const &tag, ConverterContext &) {
@@ -2036,11 +2239,23 @@ private:
     auto name = itemB->string(u8"Name", u8"");
     if (Item::IsRangedWeapon(name)) {
       AddDefinition(b, u8"+minecraft:ranged_attack");
+    } else if (Item::IsMeleeWeapon(name)) {
+      AddDefinition(b, u8"+minecraft:melee_attack");
     }
   }
 
   static void Sittable(CompoundTag &c, CompoundTag const &tag, ConverterContext &) {
     CopyBoolValues(tag, c, {{u8"Sitting"}});
+  }
+
+  static void SoundVariant(CompoundTag &b, CompoundTag const &j, ConverterContext &) {
+    if (auto soundVariantJ = j.string(u8"sound_variant"); soundVariantJ) {
+      auto soundVariant = Namespace::Remove(*soundVariantJ);
+      if (soundVariant == u8"classic") {
+        soundVariant = u8"default";
+      }
+      AddProperty(b, u8"minecraft:sound_variant", String(Namespace::Add(soundVariant)));
+    }
   }
 
   static void Temper(CompoundTag &c, CompoundTag const &tag, ConverterContext &) {
@@ -2222,6 +2437,9 @@ private:
     if (!ret) {
       return ret;
     }
+
+    CopyIntValues(tag, *ret, {{u8"Age"}});
+    CopyBoolValues(tag, *ret, {{u8"AgeLocked", u8"GrowthPaused"}});
 
     auto fromBucket = tag.boolean(u8"FromBucket");
     if (fromBucket) {

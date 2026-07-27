@@ -1258,6 +1258,11 @@ private:
     return bName;
   }
 
+  static String PotentSulfur(String const &bName, CompoundTag const &s, Props &p, int outputDataVersion) {
+    p[u8"potent_sulfur_state"] = s.string(u8"potent_sulfur_state", u8"dry");
+    return bName;
+  }
+
   static String Portal(String const &bName, CompoundTag const &s, Props &p, int outputDataVersion) {
     auto axis = s.string(u8"portal_axis", u8"y");
     p[u8"axis"] = axis;
@@ -3396,6 +3401,37 @@ private:
     E(waxed_exposed_copper_bars, BlockWithSubmergible);
     E(waxed_weathered_copper_bars, BlockWithSubmergible);
     E(waxed_oxidized_copper_bars, BlockWithSubmergible);
+
+    // 26.2
+    E(cinnabar_slab, Slab);
+    E(cinnabar_double_slab, DoubleSlab(u8"cinnabar_slab"));
+    E(cinnabar_brick_slab, Slab);
+    E(cinnabar_brick_double_slab, DoubleSlab(u8"cinnabar_brick_slab"));
+    E(polished_cinnabar_slab, Slab);
+    E(polished_cinnabar_double_slab, DoubleSlab(u8"polished_cinnabar_slab"));
+    E(sulfur_slab, Slab);
+    E(sulfur_double_slab, DoubleSlab(u8"sulfur_slab"));
+    E(sulfur_brick_slab, Slab);
+    E(sulfur_brick_double_slab, DoubleSlab(u8"sulfur_brick_slab"));
+    E(polished_sulfur_slab, Slab);
+    E(polished_sulfur_double_slab, DoubleSlab(u8"polished_sulfur_slab"));
+
+    E(cinnabar_stairs, Stairs);
+    E(cinnabar_brick_stairs, Stairs);
+    E(polished_cinnabar_stairs, Stairs);
+    E(sulfur_stairs, Stairs);
+    E(sulfur_brick_stairs, Stairs);
+    E(polished_sulfur_stairs, Stairs);
+
+    E(cinnabar_wall, BlockWithWallProperties);
+    E(cinnabar_brick_wall, BlockWithWallProperties);
+    E(polished_cinnabar_wall, BlockWithWallProperties);
+    E(sulfur_wall, BlockWithWallProperties);
+    E(sulfur_brick_wall, BlockWithWallProperties);
+    E(polished_sulfur_wall, BlockWithWallProperties);
+
+    E(potent_sulfur, PotentSulfur);
+    E(sulfur_spike, PointedDripstone);
 #undef E
 
     return table;

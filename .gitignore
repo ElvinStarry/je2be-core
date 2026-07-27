@@ -1,4 +1,5 @@
 /build
+/build-*/
 /xcode
 *.mca
 *.dat_old

@@ -1,0 +1,123 @@
+--- a/include/mcfile/blocks/minecraft.hpp
++++ b/include/mcfile/blocks/minecraft.hpp
+@@ -1259,6 +1259,38 @@
+     waxed_weathered_copper_chain,
+     waxed_oxidized_copper_chain,
+ 
++    // 26.2
++    chiseled_cinnabar,
++    chiseled_sulfur,
++    cinnabar,
++    cinnabar_brick_slab,
++    cinnabar_brick_stairs,
++    cinnabar_brick_wall,
++    cinnabar_bricks,
++    cinnabar_slab,
++    cinnabar_stairs,
++    cinnabar_wall,
++    golden_dandelion,
++    polished_cinnabar,
++    polished_cinnabar_slab,
++    polished_cinnabar_stairs,
++    polished_cinnabar_wall,
++    polished_sulfur,
++    polished_sulfur_slab,
++    polished_sulfur_stairs,
++    polished_sulfur_wall,
++    potent_sulfur,
++    potted_golden_dandelion,
++    sulfur,
++    sulfur_brick_slab,
++    sulfur_brick_stairs,
++    sulfur_brick_wall,
++    sulfur_bricks,
++    sulfur_slab,
++    sulfur_spike,
++    sulfur_stairs,
++    sulfur_wall,
++
+     minecraft_max_block_id,
+ };
+ 
+--- a/include/mcfile/blocks/from-name.hpp
++++ b/include/mcfile/blocks/from-name.hpp
+@@ -1265,6 +1265,38 @@
+     t[u8"minecraft:waxed_oxidized_copper_chain"] = waxed_oxidized_copper_chain;
+     t[u8"minecraft:exposed_copper_golem_statue"] = exposed_copper_golem_statue;
+ 
++    // 26.2
++    t[u8"minecraft:chiseled_cinnabar"] = chiseled_cinnabar;
++    t[u8"minecraft:chiseled_sulfur"] = chiseled_sulfur;
++    t[u8"minecraft:cinnabar"] = cinnabar;
++    t[u8"minecraft:cinnabar_brick_slab"] = cinnabar_brick_slab;
++    t[u8"minecraft:cinnabar_brick_stairs"] = cinnabar_brick_stairs;
++    t[u8"minecraft:cinnabar_brick_wall"] = cinnabar_brick_wall;
++    t[u8"minecraft:cinnabar_bricks"] = cinnabar_bricks;
++    t[u8"minecraft:cinnabar_slab"] = cinnabar_slab;
++    t[u8"minecraft:cinnabar_stairs"] = cinnabar_stairs;
++    t[u8"minecraft:cinnabar_wall"] = cinnabar_wall;
++    t[u8"minecraft:golden_dandelion"] = golden_dandelion;
++    t[u8"minecraft:polished_cinnabar"] = polished_cinnabar;
++    t[u8"minecraft:polished_cinnabar_slab"] = polished_cinnabar_slab;
++    t[u8"minecraft:polished_cinnabar_stairs"] = polished_cinnabar_stairs;
++    t[u8"minecraft:polished_cinnabar_wall"] = polished_cinnabar_wall;
++    t[u8"minecraft:polished_sulfur"] = polished_sulfur;
++    t[u8"minecraft:polished_sulfur_slab"] = polished_sulfur_slab;
++    t[u8"minecraft:polished_sulfur_stairs"] = polished_sulfur_stairs;
++    t[u8"minecraft:polished_sulfur_wall"] = polished_sulfur_wall;
++    t[u8"minecraft:potent_sulfur"] = potent_sulfur;
++    t[u8"minecraft:potted_golden_dandelion"] = potted_golden_dandelion;
++    t[u8"minecraft:sulfur"] = sulfur;
++    t[u8"minecraft:sulfur_brick_slab"] = sulfur_brick_slab;
++    t[u8"minecraft:sulfur_brick_stairs"] = sulfur_brick_stairs;
++    t[u8"minecraft:sulfur_brick_wall"] = sulfur_brick_wall;
++    t[u8"minecraft:sulfur_bricks"] = sulfur_bricks;
++    t[u8"minecraft:sulfur_slab"] = sulfur_slab;
++    t[u8"minecraft:sulfur_spike"] = sulfur_spike;
++    t[u8"minecraft:sulfur_stairs"] = sulfur_stairs;
++    t[u8"minecraft:sulfur_wall"] = sulfur_wall;
++
+     return ret;
+ }
+ 
+--- a/include/mcfile/blocks/name.hpp
++++ b/include/mcfile/blocks/name.hpp
+@@ -1271,6 +1271,38 @@
+     m[waxed_oxidized_copper_chain] = {.name = u8"minecraft:waxed_oxidized_copper_chain", .opaque = false};
+     m[exposed_copper_golem_statue] = {.name = u8"minecraft:exposed_copper_golem_statue", .opaque = false};
+ 
++    // 26.2
++    m[chiseled_cinnabar] = {.name = u8"minecraft:chiseled_cinnabar", .opaque = true};
++    m[chiseled_sulfur] = {.name = u8"minecraft:chiseled_sulfur", .opaque = true};
++    m[cinnabar] = {.name = u8"minecraft:cinnabar", .opaque = true};
++    m[cinnabar_brick_slab] = {.name = u8"minecraft:cinnabar_brick_slab", .opaque = false};
++    m[cinnabar_brick_stairs] = {.name = u8"minecraft:cinnabar_brick_stairs", .opaque = false};
++    m[cinnabar_brick_wall] = {.name = u8"minecraft:cinnabar_brick_wall", .opaque = false};
++    m[cinnabar_bricks] = {.name = u8"minecraft:cinnabar_bricks", .opaque = true};
++    m[cinnabar_slab] = {.name = u8"minecraft:cinnabar_slab", .opaque = false};
++    m[cinnabar_stairs] = {.name = u8"minecraft:cinnabar_stairs", .opaque = false};
++    m[cinnabar_wall] = {.name = u8"minecraft:cinnabar_wall", .opaque = false};
++    m[golden_dandelion] = {.name = u8"minecraft:golden_dandelion", .opaque = false};
++    m[polished_cinnabar] = {.name = u8"minecraft:polished_cinnabar", .opaque = true};
++    m[polished_cinnabar_slab] = {.name = u8"minecraft:polished_cinnabar_slab", .opaque = false};
++    m[polished_cinnabar_stairs] = {.name = u8"minecraft:polished_cinnabar_stairs", .opaque = false};
++    m[polished_cinnabar_wall] = {.name = u8"minecraft:polished_cinnabar_wall", .opaque = false};
++    m[polished_sulfur] = {.name = u8"minecraft:polished_sulfur", .opaque = true};
++    m[polished_sulfur_slab] = {.name = u8"minecraft:polished_sulfur_slab", .opaque = false};
++    m[polished_sulfur_stairs] = {.name = u8"minecraft:polished_sulfur_stairs", .opaque = false};
++    m[polished_sulfur_wall] = {.name = u8"minecraft:polished_sulfur_wall", .opaque = false};
++    m[potent_sulfur] = {.name = u8"minecraft:potent_sulfur", .opaque = true};
++    m[potted_golden_dandelion] = {.name = u8"minecraft:potted_golden_dandelion", .opaque = false};
++    m[sulfur] = {.name = u8"minecraft:sulfur", .opaque = true};
++    m[sulfur_brick_slab] = {.name = u8"minecraft:sulfur_brick_slab", .opaque = false};
++    m[sulfur_brick_stairs] = {.name = u8"minecraft:sulfur_brick_stairs", .opaque = false};
++    m[sulfur_brick_wall] = {.name = u8"minecraft:sulfur_brick_wall", .opaque = false};
++    m[sulfur_bricks] = {.name = u8"minecraft:sulfur_bricks", .opaque = true};
++    m[sulfur_slab] = {.name = u8"minecraft:sulfur_slab", .opaque = false};
++    m[sulfur_spike] = {.name = u8"minecraft:sulfur_spike", .opaque = false};
++    m[sulfur_stairs] = {.name = u8"minecraft:sulfur_stairs", .opaque = false};
++    m[sulfur_wall] = {.name = u8"minecraft:sulfur_wall", .opaque = false};
++
+     std::vector<Characteristics> list(blocks::minecraft::minecraft_max_block_id - 1);
+     for (uint32_t i = 1; i < minecraft::minecraft_max_block_id; i++) {
+         BlockId id = static_cast<BlockId>(i);

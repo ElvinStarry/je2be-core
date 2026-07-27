@@ -226,6 +226,23 @@ public:
     return attributes;
   }
 
+  static Attributes SulfurCube(bool isBaby, std::optional<float> currentHealth) {
+    float const health = isBaby ? 4.0f : 8.0f;
+    float const movement = isBaby ? 0.3f : 0.4f;
+    Attributes attributes(
+        Attribute(health, health, health),
+        Attribute(0, 0, 1),
+        Attribute(movement, movement),
+        Attribute(0.02, 0.02),
+        Attribute(0.02, 0.02),
+        Attribute(16, 16, 2048),
+        std::nullopt);
+    if (currentHealth) {
+      attributes.health.updateCurrent(*currentHealth);
+    }
+    return attributes;
+  }
+
   static Attributes ZombieAndZombieVillager(bool isBaby, std::optional<float> currentHealth) {
     float movement = isBaby ? 0.35 : 0.23;
     Attributes attributes(Attribute(20, 20, 20),         // health(base, current, max)
@@ -440,6 +457,40 @@ private:
                                                             Attribute(0.02, 0.02),   // lava_movement
                                                             Attribute(16, 16, 2048), // follow_range
                                                             Attribute(2, 2, 2))));   // attack_damage
+
+    // 26.2
+    table->insert(make_pair(u8"minecraft:camel_husk", Attributes(
+                                                         Attribute(32, 32, 32),
+                                                         Attribute(0, 0, 1),
+                                                         Attribute(0.09, 0.09),
+                                                         Attribute(0.02, 0.02),
+                                                         Attribute(0.02, 0.02),
+                                                         Attribute(16, 16, 2048),
+                                                         nullopt)));
+    table->insert(make_pair(u8"minecraft:nautilus", Attributes(
+                                                       Attribute(15, 15, 15),
+                                                       Attribute(0.3, 0.3, 1),
+                                                       Attribute(0.15, 0.15),
+                                                       Attribute(0.07, 0.07),
+                                                       Attribute(0.02, 0.02),
+                                                       Attribute(16, 16, 2048),
+                                                       Attribute(3, 3, 3))));
+    table->insert(make_pair(u8"minecraft:parched", Attributes(
+                                                       Attribute(16, 16, 16),
+                                                       Attribute(0, 0, 1),
+                                                       Attribute(0.25, 0.25),
+                                                       Attribute(0.02, 0.02),
+                                                       Attribute(0.02, 0.02),
+                                                       Attribute(16, 16, 2048),
+                                                       Attribute(2, 2, 2))));
+    table->insert(make_pair(u8"minecraft:zombie_nautilus", Attributes(
+                                                              Attribute(15, 15, 15),
+                                                              Attribute(0.3, 0.3, 1),
+                                                              Attribute(0.15, 0.15),
+                                                              Attribute(0.1, 0.1),
+                                                              Attribute(0.02, 0.02),
+                                                              Attribute(16, 16, 2048),
+                                                              Attribute(3, 3, 3))));
 
     return table;
   }

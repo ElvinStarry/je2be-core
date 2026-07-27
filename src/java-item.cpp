@@ -9,6 +9,8 @@
 #include "_optional.hpp"
 #include "_props.hpp"
 #include "entity/_axolotl.hpp"
+#include "entity/_entity-attributes.hpp"
+#include "entity/_sulfur-cube.hpp"
 #include "entity/_tropical-fish.hpp"
 #include "enums/_banner-color-code-bedrock.hpp"
 #include "enums/_color-code-java.hpp"
@@ -72,7 +74,8 @@ public:
 
   static bool IsRangedWeapon(std::u8string const &name) {
     static std::unordered_set<std::u8string> const sWeapons = {u8"bow", u8"crossbow", u8"trident"};
-    return sWeapons.find(Namespace::Remove(name)) != sWeapons.end();
+    auto const normalized = Namespace::Remove(name);
+    return sWeapons.find(normalized) != sWeapons.end() || normalized.ends_with(u8"_spear");
   }
 
   static bool IsMeleeWeapon(std::u8string const &name) {
@@ -80,6 +83,9 @@ public:
       return true;
     }
     if (name.ends_with(u8"_axe")) {
+      return true;
+    }
+    if (name.ends_with(u8"_spear")) {
       return true;
     }
     return false;
@@ -853,6 +859,28 @@ private:
     E(copper_shovel, DefaultItem);
     E(copper_axe, DefaultItem);
     E(copper_hoe, DefaultItem);
+
+    // 1.21.11 - 26.2
+    E(camel_husk_spawn_egg, DefaultItem);
+    E(copper_nautilus_armor, DefaultItem);
+    E(copper_spear, DefaultItem);
+    E(diamond_nautilus_armor, DefaultItem);
+    E(diamond_spear, DefaultItem);
+    E(golden_nautilus_armor, DefaultItem);
+    E(golden_spear, DefaultItem);
+    E(iron_nautilus_armor, DefaultItem);
+    E(iron_spear, DefaultItem);
+    E(music_disc_bounce, DefaultItem);
+    E(nautilus_spawn_egg, DefaultItem);
+    E(netherite_horse_armor, DefaultItem);
+    E(netherite_nautilus_armor, DefaultItem);
+    E(netherite_spear, DefaultItem);
+    E(parched_spawn_egg, DefaultItem);
+    E(stone_spear, DefaultItem);
+    E(sulfur_cube_bucket, SulfurCubeBucket);
+    E(sulfur_cube_spawn_egg, DefaultItem);
+    E(wooden_spear, DefaultItem);
+    E(zombie_nautilus_spawn_egg, DefaultItem);
 #undef E
     return table;
   }
@@ -1593,6 +1621,74 @@ private:
         ret->set(u8"tag", tag);
       }
     }
+    return ret;
+  }
+
+  static CompoundTagPtr SulfurCubeBucket(std::u8string const &name, CompoundTag const &item, Context &ctx, DataVersion const &dataVersion) {
+    auto ret = New(name, true);
+    ret->set(u8"Damage", Short(0));
+
+    Entity::Rep rep(ctx.fUuids->randomEntityId());
+    rep.fIdentifier = u8"minecraft:sulfur_cube";
+    rep.fDefinitions = {
+        u8"+minecraft:sulfur_cube",
+        u8"+minecraft:sulfur_cube_ai",
+        u8"+minecraft:sulfur_cube_medium",
+        u8"+minecraft:sulfur_cube_medium_without_block",
+        u8"+minecraft:sulfur_cube_medium_without_block_can_pickup",
+        u8"+minecraft:sulfur_cube_without_target",
+    };
+    auto tagB = rep.toCompoundTag();
+    tagB->set(u8"Size", Byte(2));
+    tagB->set(u8"Variant", Int(2));
+    tagB->set(u8"Persistent", Bool(true));
+    tagB->set(u8"NaturalSpawn", Bool(false));
+
+    auto entityDataJ = GetComponent<CompoundTag>(item, u8"bucket_entity_data");
+    std::optional<float> health;
+    if (entityDataJ) {
+      health = entityDataJ->float32(u8"Health");
+      CopyBoolValues(*entityDataJ, *tagB, {{u8"NoAI"}, {u8"Silent"}, {u8"NoGravity"}, {u8"Glowing"}, {u8"Invulnerable"}, {u8"PersistenceRequired", u8"Persistent"}, {u8"age_locked", u8"GrowthPaused"}});
+      CopyIntValues(*entityDataJ, *tagB, {{u8"age", u8"Age"}});
+    }
+    tagB->set(u8"Attributes", EntityAttributes::SulfurCube(false, health).toBedrockListTag());
+
+    auto mainhandB = List<Tag::Type::Compound>();
+    auto contentJ = GetComponent<CompoundTag>(item, u8"sulfur_cube_content");
+    std::u8string archetype = u8"none";
+    if (contentJ && Item::Count(*contentJ, 0) > 0) {
+      if (auto contentB = Item::From(contentJ, ctx, dataVersion); contentB) {
+        mainhandB->push_back(contentB);
+        archetype = SulfurCube::ArchetypeFromJavaItem(contentJ->string(u8"id", u8""));
+        auto definitionsB = List<Tag::Type::String>();
+        for (auto const &definition : {
+                 u8"+minecraft:sulfur_cube",
+                 u8"+minecraft:sulfur_cube_medium",
+                 u8"+minecraft:sulfur_cube_medium_with_block",
+                 u8"+minecraft:sulfur_cube_medium_with_block_interactable",
+                 u8"+minecraft:sulfur_cube_without_target"}) {
+          definitionsB->push_back(String(definition));
+        }
+        if (archetype != u8"none") {
+          definitionsB->push_back(String(u8"+minecraft:sulfur_cube_" + archetype));
+        }
+        tagB->set(u8"definitions", definitionsB);
+        auto dropChances = List<Tag::Type::Compound>();
+        auto chance = Compound();
+        chance->set(u8"DropChance", Float(1));
+        chance->set(u8"Slot", u8"mainhand");
+        dropChances->push_back(chance);
+        tagB->set(u8"SlotDropChances", dropChances);
+      }
+    }
+    if (mainhandB->empty()) {
+      mainhandB->push_back(Empty());
+    }
+    tagB->set(u8"Mainhand", mainhandB);
+    auto properties = Compound();
+    properties->set(u8"minecraft:sulfur_cube_archetype", archetype);
+    tagB->set(u8"properties", properties);
+    ret->set(u8"tag", tagB);
     return ret;
   }
 #pragma endregion

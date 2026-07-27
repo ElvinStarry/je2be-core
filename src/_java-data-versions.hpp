@@ -168,6 +168,9 @@ enum class JavaDataVersions : int {
   Snapshot25w42a = 4658,
   Snapshot25w43a = 4659,
   Snapshot25w44a = 4660,
+  Release1_21_11 = 4671,
+  Release26_1 = 4786,
+  Release26_2 = 4903,
 };
 
 }
