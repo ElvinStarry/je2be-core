@@ -39,14 +39,8 @@ endif()
 
 CPMAddPackage(
   NAME libminecraft-file
-  GITHUB_REPOSITORY kbinani/libminecraft-file
-  GIT_TAG 6f00d2c6c06b400424b5418193410bfbc0fe76bf
-  PATCH_COMMAND
-    ${CMAKE_COMMAND}
-    -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
-    -DSOURCE_DIR=<SOURCE_DIR>
-    -DPATCH_FILES=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/libminecraft-file-mca-write-error.patch\;${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/libminecraft-file-26.2-blocks.patch
-    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-patches.cmake)
+  GITHUB_REPOSITORY ElvinStarry/libminecraft-file
+  GIT_TAG 3f37d2605a034dd39145358f4fe64f8a6826c50f)
 
 CPMAddPackage(
   NAME defer
