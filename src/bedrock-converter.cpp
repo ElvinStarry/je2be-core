@@ -235,16 +235,16 @@ public:
         // Move time data to data/minecraft/world_clocks.dat
         {
           auto time = data->int64(u8"Time", 0);
-          auto dayTime = data->int64(u8"DayTime", 0);
+          // auto dayTime = data->int64(u8"DayTime", 0);   // not exist
           auto clocks = Compound();
           auto overworld = Compound();
           overworld->set(u8"total_ticks", Long(time));
           clocks->set(u8"minecraft:overworld", overworld);
           auto end = Compound();
-          end->set(u8"total_ticks", Long(dayTime));
+          end->set(u8"total_ticks", Long(time));
           clocks->set(u8"minecraft:the_end", end);
           auto nether = Compound();
-          nether->set(u8"total_ticks", Long(0));
+          nether->set(u8"total_ticks", Long(time));
           clocks->set(u8"minecraft:the_nether", nether);
           data->erase(u8"DayTime");
           auto clocksTag = Compound();
