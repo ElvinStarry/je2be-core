@@ -991,6 +991,10 @@ public:
     }
   }
 
+  static void Vindicator(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    j[u8"Johnny"] = Bool(HasDefinition(b, u8"+minecraft:vindicator_johnny"));
+  }
+
   static void Villager(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     i32 tradeExperience = b.int32(u8"TradeExperience", 0);
     if (tradeExperience == 0) {
@@ -2694,7 +2698,7 @@ public:
     E(camel, C(Same, Animal, Bred, SaddleItemFromChestItems, Tame, Camel, CamelPose));
     E(sniffer, C(Same, Animal));
     E(ocelot, C(Same, Animal, Age, Ocelot));
-    E(vindicator, C(Same, LivingEntity));
+    E(vindicator, C(Same, LivingEntity, Vindicator));
     E(xp_orb, C(Rename(u8"experience_orb"), Base, ExperienceOrb));
 
     E(armadillo, C(Same, Animal, Armadillo));

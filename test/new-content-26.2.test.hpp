@@ -356,3 +356,56 @@ TEST_CASE("new 26.2 Bedrock entity conversion") {
     CHECK(converted->fEntity->compoundTag(u8"equipment")->compoundTag(u8"body")->string(u8"id") == u8"minecraft:stone");
   }
 }
+
+TEST_CASE("vindicator Johnny entity conversion") {
+  auto dataVersion = NewContentDataVersion();
+
+  SUBCASE("Java Johnny flag enables Bedrock targeting") {
+    NewContentJavaContext context;
+    auto entity = NewContentJavaEntity(u8"minecraft:vindicator", u8"00000000-0000-0000-0000-000000000101");
+    entity->set(u8"Johnny", Bool(true));
+    entity->set(u8"CustomName", props::CreateJavaTextComponent(u8"Not Johnny", dataVersion.fSource));
+    auto converted = je2be::java::Entity::From(*entity, context.fContext, dataVersion, {});
+    REQUIRE(converted.fEntity);
+    CHECK(je2be::bedrock::Entity::HasDefinition(*converted.fEntity, u8"+minecraft:default_targeting"));
+    CHECK(je2be::bedrock::Entity::HasDefinition(*converted.fEntity, u8"+minecraft:vindicator_johnny"));
+  }
+
+  SUBCASE("Java Johnny flag overrides the custom name") {
+    NewContentJavaContext context;
+    auto entity = NewContentJavaEntity(u8"minecraft:vindicator", u8"00000000-0000-0000-0000-000000000102");
+    entity->set(u8"Johnny", Bool(false));
+    entity->set(u8"CustomName", props::CreateJavaTextComponent(u8"Johnny", dataVersion.fSource));
+    auto converted = je2be::java::Entity::From(*entity, context.fContext, dataVersion, {});
+    REQUIRE(converted.fEntity);
+    CHECK(converted.fEntity->string(u8"CustomName") == u8"Johnny");
+    CHECK_FALSE(je2be::bedrock::Entity::HasDefinition(*converted.fEntity, u8"+minecraft:vindicator_johnny"));
+  }
+
+  SUBCASE("Java custom name enables targeting when the flag is absent") {
+    NewContentJavaContext context;
+    auto entity = NewContentJavaEntity(u8"minecraft:vindicator", u8"00000000-0000-0000-0000-000000000103");
+    entity->set(u8"CustomName", props::CreateJavaTextComponent(u8"Johnny", dataVersion.fSource));
+    auto converted = je2be::java::Entity::From(*entity, context.fContext, dataVersion, {});
+    REQUIRE(converted.fEntity);
+    CHECK(je2be::bedrock::Entity::HasDefinition(*converted.fEntity, u8"+minecraft:vindicator_johnny"));
+  }
+
+  SUBCASE("Bedrock Johnny definition restores the Java flag") {
+    auto root = mcfile::File::CreateTempDir(fs::temp_directory_path());
+    REQUIRE(root);
+    defer {
+      fs::remove_all(*root);
+    };
+    auto context = NewContentBedrockContext(*root);
+    REQUIRE(context);
+
+    je2be::java::Entity::Rep rep(101);
+    rep.fIdentifier = u8"minecraft:vindicator";
+    rep.fDefinitions = {u8"+minecraft:default_targeting", u8"+minecraft:vindicator_johnny"};
+    auto converted = je2be::bedrock::Entity::From(*rep.toCompoundTag(), *context, dataVersion.fTarget);
+    REQUIRE(converted);
+    REQUIRE(converted->fEntity);
+    CHECK(converted->fEntity->boolean(u8"Johnny", false));
+  }
+}

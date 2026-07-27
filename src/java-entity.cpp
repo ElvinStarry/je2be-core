@@ -646,7 +646,7 @@ private:
 
     M(vex);
     E(villager, C(Animal, Rename(u8"villager_v2"), Offers(4, u8"Offers"), ChestItemsFromInventory, Villager));
-    E(vindicator, C(Monster, Definitions({u8"+minecraft:default_targeting"})));
+    E(vindicator, C(Monster, Definitions({u8"+minecraft:default_targeting"}), Vindicator));
     E(wandering_trader, C(Animal, Offers(0, u8"Offers"), ChestItemsFromInventory, WanderingTrader));
     E(witch, C(Monster, CanJoinRaid));
     M(wither_skeleton);
@@ -1920,6 +1920,19 @@ private:
     }
   }
 
+  static void Vindicator(CompoundTag &c, CompoundTag const &tag, ConverterContext &) {
+    bool johnny;
+    if (auto flag = tag.boolean(u8"Johnny"); flag) {
+      johnny = *flag;
+    } else {
+      auto customName = GetCustomName(tag);
+      johnny = customName && *customName == u8"Johnny";
+    }
+    if (johnny) {
+      AddDefinition(c, u8"+minecraft:vindicator_johnny");
+    }
+  }
+
   static void Villager(CompoundTag &c, CompoundTag const &tag, ConverterContext &ctx) {
     using namespace std;
 
@@ -3133,6 +3146,14 @@ private:
     tag[u8"definitions"] = d;
   }
 
+  static std::optional<std::u8string> GetCustomName(CompoundTag const &tag) {
+    auto found = tag.find(u8"CustomName");
+    if (found == tag.end()) {
+      return std::nullopt;
+    }
+    return props::ParseJavaTextComponent(found->second);
+  }
+
   static void AddDefinitionFlag(CompoundTag &tag, std::u8string const &body, bool flag) {
     std::u8string definition = (flag ? u8"+" : u8"-") + body;
     AddDefinition(tag, definition);
@@ -3391,7 +3412,7 @@ private:
     auto rotation = GetRotation(tag, u8"Rotation");
     auto uuid = GetEntityUuid(tag, ctx);
     auto id = tag.string(u8"id");
-    auto customNameJ = tag.string(u8"CustomName");
+    auto customNameJ = GetCustomName(tag);
 
     if (!uuid) {
       return nullopt;
@@ -3428,9 +3449,8 @@ private:
       e.fIdentifier = MigrateName(*id);
     }
     if (customNameJ) {
-      auto text = props::GetTextComponent(*customNameJ);
-      if (!text.empty()) {
-        e.fCustomName = text;
+      if (!customNameJ->empty()) {
+        e.fCustomName = *customNameJ;
         e.fCustomNameVisible = true;
       }
     }
