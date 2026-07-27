@@ -3,6 +3,7 @@
 #include <je2be/bedrock/options.hpp>
 #include <je2be/bedrock/progress.hpp>
 #include <je2be/nbt.hpp>
+#include <je2be/strings.hpp>
 
 #include "_data-version.hpp"
 #include "_props.hpp"
@@ -208,8 +209,94 @@ public:
           }
         }
 
-        // Remove GameRules from level.dat
-        data->erase(u8"GameRules");
+        // Remove GameRules from level.dat and write to data/minecraft/game_rules.dat
+        if (auto gameRules = data->compoundTag(u8"GameRules"); gameRules) {
+          data->erase(u8"GameRules");
+
+          auto rulesJ = Compound();
+          for (auto const &kv : *gameRules) {
+            auto name = kv.first;
+            auto valueTag = kv.second;
+            auto str = valueTag->asString();
+            if (!str) {
+              continue;
+            }
+            bool boolVal = str->fValue == u8"true";
+            i32 intVal = 0;
+            bool isInt = false;
+            if (!boolVal && str->fValue != u8"false") {
+              auto i = strings::ToI32(str->fValue);
+              if (i) {
+                intVal = *i;
+                isInt = true;
+              } else {
+                continue;
+              }
+            }
+
+            // Map old Java names to 26.2 names
+            std::optional<std::u8string> newName;
+            bool invert = false;
+            if (name == u8"announceAdvancements") newName = u8"show_advancement_messages";
+            else if (name == u8"commandBlockOutput") newName = u8"command_block_output";
+            else if (name == u8"commandBlocksEnabled") newName = u8"command_blocks_work";
+            else if (name == u8"doDaylightCycle") newName = u8"advance_time";
+            else if (name == u8"doEntityDrops") newName = u8"entity_drops";
+            else if (name == u8"doFireTick") { if (!isInt) { intVal = boolVal ? 128 : 0; isInt = true; } newName = u8"fire_spread_radius_around_player"; }
+            else if (name == u8"doImmediateRespawn") newName = u8"immediate_respawn";
+            else if (name == u8"doInsomnia") newName = u8"spawn_phantoms";
+            else if (name == u8"doLimitedCrafting") newName = u8"limited_crafting";
+            else if (name == u8"doMobLoot") newName = u8"mob_drops";
+            else if (name == u8"doMobSpawning") newName = u8"spawn_mobs";
+            else if (name == u8"doPatrolSpawning") newName = u8"spawn_patrols";
+            else if (name == u8"doTileDrops") newName = u8"block_drops";
+            else if (name == u8"doTraderSpawning") newName = u8"spawn_wandering_traders";
+            else if (name == u8"doWardenSpawning") newName = u8"spawn_wardens";
+            else if (name == u8"doWeatherCycle") newName = u8"advance_weather";
+            else if (name == u8"drowningDamage") newName = u8"drowning_damage";
+            else if (name == u8"fallDamage") newName = u8"fall_damage";
+            else if (name == u8"fireDamage") newName = u8"fire_damage";
+            else if (name == u8"freezeDamage") newName = u8"freeze_damage";
+            else if (name == u8"keepInventory") newName = u8"keep_inventory";
+            else if (name == u8"locatorBar") newName = u8"locator_bar";
+            else if (name == u8"maxCommandChainLength") newName = u8"max_command_sequence_length";
+            else if (name == u8"mobGriefing") newName = u8"mob_griefing";
+            else if (name == u8"naturalRegeneration") newName = u8"natural_health_regeneration";
+            else if (name == u8"pvp") newName = u8"pvp";
+            else if (name == u8"randomTickSpeed") newName = u8"random_tick_speed";
+            else if (name == u8"reducedDebugInfo") newName = u8"reduced_debug_info";
+            else if (name == u8"sendCommandFeedback") newName = u8"send_command_feedback";
+            else if (name == u8"showDeathMessages") newName = u8"show_death_messages";
+            else if (name == u8"tntExplodes") newName = u8"tnt_explodes";
+            else if (name == u8"tntExplosionDropDecay") newName = u8"tnt_explosion_drop_decay";
+            else if (name == u8"maxCommandChainLength") newName = u8"max_command_sequence_length";
+            else if (name == u8"playersSleepingPercentage") newName = u8"players_sleeping_percentage";
+            else if (name == u8"projectilesCanBreakBlocks") newName = u8"projectiles_can_break_blocks";
+            else if (name == u8"spawnRadius") newName = u8"respawn_radius";
+            else if (name == u8"spawnerBlocksEnabled") newName = u8"spawner_blocks_work";
+            else if (name == u8"enderPearlsVanishOnDeath") newName = u8"ender_pearls_vanish_on_death";
+            else if (name == u8"spawnMonsters") newName = u8"spawn_monsters";
+            else if (name == u8"disableElytraMovementCheck") { newName = u8"elytra_movement_check"; invert = true; }
+            else if (name == u8"disablePlayerMovementCheck") { newName = u8"player_movement_check"; invert = true; }
+            else if (name == u8"disableRaids") { newName = u8"raids"; invert = true; }
+            else if (name == u8"allowFireTicksAwayFromPlayer") { if (!isInt) { intVal = boolVal ? -1 : 128; isInt = true; } newName = u8"fire_spread_radius_around_player"; }
+
+            if (newName) {
+              if (isInt) {
+                rulesJ->set(u8"minecraft:" + *newName, Int(intVal));
+              } else {
+                rulesJ->set(u8"minecraft:" + *newName, Bool(invert ? !boolVal : boolVal));
+              }
+            }
+          }
+          auto rulesTag = Compound();
+          rulesTag->set(u8"data", rulesJ);
+          rulesTag->set(u8"DataVersion", Int(kJavaDataVersion));
+          auto s = make_shared<mcfile::stream::GzFileOutputStream>(dataDir / u8"game_rules.dat");
+          if (!CompoundTag::Write(*rulesTag, s, mcfile::Encoding::Java)) {
+            return JE2BE_ERROR;
+          }
+        }
 
         // Move weather data to data/minecraft/weather.dat
         {
@@ -274,6 +361,51 @@ public:
           data->set(u8"difficulty_settings", ds);
           data->erase(u8"Difficulty");
           data->erase(u8"hardcore");
+        }
+
+        // Move DragonFight to dimensions/minecraft/the_end/data/minecraft/ender_dragon_fight.dat
+        if (auto dragonFight = data->compoundTag(u8"DragonFight"); dragonFight) {
+          data->erase(u8"DragonFight");
+
+          auto fightJ = Compound();
+
+          CopyBoolValues(*dragonFight, *fightJ, {{u8"DragonKilled", u8"dragon_killed"}, {u8"PreviouslyKilled", u8"previously_killed"}});
+          fightJ->set(u8"needs_state_scanning", Bool(dragonFight->boolean(u8"NeedsStateScanning", false)));
+
+          if (auto dragonUuid = dragonFight->intArrayTag(u8"Dragon"); dragonUuid) {
+            fightJ->set(u8"dragon_uuid", dragonUuid);
+          } else {
+            fightJ->set(u8"needs_state_scanning", Bool(true));
+          }
+
+          if (auto gateways = dragonFight->listTag(u8"Gateways"); gateways) {
+            auto gw = List<Tag::Type::Int>();
+            for (auto const &it : *gateways) {
+              auto v = it->asInt();
+              if (v) {
+                gw->push_back(Int(v->fValue));
+              }
+            }
+            fightJ->set(u8"gateways", gw);
+          }
+
+          if (auto exitPortal = dragonFight->compoundTag(u8"ExitPortalLocation"); exitPortal) {
+            Pos3i pos(exitPortal->int32(u8"X", 0), exitPortal->int32(u8"Y", 0), exitPortal->int32(u8"Z", 0));
+            fightJ->set(u8"exit_portal_location", IntArrayFromPos3i(pos));
+          }
+
+          fightJ->set(u8"respawn_time", Int(0));
+
+          auto enderDragonFightDir = output / u8"dimensions" / u8"minecraft" / u8"the_end" / u8"data" / u8"minecraft";
+          Fs::CreateDirectories(enderDragonFightDir);
+          auto edfTag = Compound();
+          edfTag->set(u8"data", fightJ);
+          edfTag->set(u8"DataVersion", Int(kJavaDataVersion));
+          auto edfPath = enderDragonFightDir / u8"ender_dragon_fight.dat";
+          auto edfStream = make_shared<mcfile::stream::GzFileOutputStream>(edfPath);
+          if (!CompoundTag::Write(*edfTag, edfStream, mcfile::Encoding::Java)) {
+            return JE2BE_ERROR;
+          }
         }
 
         // Add singleplayer_uuid from local player
