@@ -16,8 +16,6 @@ class Context::Impl {
     std::map<mcfile::Dimension, std::vector<StructurePiece>> fStructurePieces;
     std::unordered_map<i32, std::pair<mcfile::Dimension, Pos3i>> fLodestones;
     std::map<std::string, CompoundTagPtr> fPlayers;
-    int fNumChunks = 0;
-
     Options fOpt;
     mcfile::Encoding fEncoding;
 
@@ -52,13 +50,22 @@ class Context::Impl {
       for (auto const &i : fStructurePieces) {
         std::copy(i.second.begin(), i.second.end(), std::back_inserter(out.fStructurePieces[i.first]));
       }
-      out.fNumChunks += fNumChunks;
       for (auto const &it : fLodestones) {
         out.fLodestones[it.first] = it.second;
       }
       for (auto const &it : fPlayers) {
         out.fPlayers[it.first] = it.second;
       }
+    }
+
+    void acceptChunk(mcfile::Dimension d, int cx, int cz) {
+      Pos2i c(cx, cz);
+      if (!fOpt.fChunkFilter.empty() && fOpt.fChunkFilter.find(c) == fOpt.fChunkFilter.end()) {
+        return;
+      }
+      int rx = mcfile::Coordinate::RegionFromChunk(cx);
+      int rz = mcfile::Coordinate::RegionFromChunk(cz);
+      fRegions[d][Pos2i(rx, rz)].fChunks.insert(c);
     }
 
     void accept(std::string const &key, std::string const &value) {
@@ -73,23 +80,23 @@ class Context::Impl {
           }
         }
         switch (tag) {
-        case static_cast<u8>(mcfile::be::DbKey::Tag::Data3D):
-        case static_cast<u8>(mcfile::be::DbKey::Tag::Data2D): {
-          int cx = parsed.fTagged.fChunk.fX;
-          int cz = parsed.fTagged.fChunk.fZ;
-          Pos2i c(cx, cz);
-          if (!fOpt.fChunkFilter.empty()) {
-            if (fOpt.fChunkFilter.find(c) == fOpt.fChunkFilter.end()) {
-              return;
-            }
-          }
-          int rx = mcfile::Coordinate::RegionFromChunk(cx);
-          int rz = mcfile::Coordinate::RegionFromChunk(cz);
-          Pos2i r(rx, rz);
-          fRegions[d][r].fChunks.insert(c);
-          fNumChunks++;
+        case static_cast<u8>(mcfile::be::DbKey::Tag::SubChunk):
+          acceptChunk(d, parsed.fTagged.fSubChunk.fX, parsed.fTagged.fSubChunk.fZ);
           break;
-        }
+        case static_cast<u8>(mcfile::be::DbKey::Tag::Data3D):
+        case static_cast<u8>(mcfile::be::DbKey::Tag::Data2D):
+        case static_cast<u8>(mcfile::be::DbKey::Tag::BlockEntity):
+        case static_cast<u8>(mcfile::be::DbKey::Tag::Entity):
+          acceptChunk(d, parsed.fTagged.fChunk.fX, parsed.fTagged.fChunk.fZ);
+          break;
+        case static_cast<u8>(mcfile::be::DbKey::Tag::Version):
+        case static_cast<u8>(mcfile::be::DbKey::Tag::VersionLegacy):
+        case static_cast<u8>(mcfile::be::DbKey::Tag::FinalizedState):
+          // Preserve generated void columns so Java does not regenerate End terrain.
+          if (d == mcfile::Dimension::End) {
+            acceptChunk(d, parsed.fTagged.fChunk.fX, parsed.fTagged.fChunk.fZ);
+          }
+          break;
         case static_cast<u8>(mcfile::be::DbKey::Tag::StructureBounds): {
           std::vector<StructurePiece> buffer;
           StructurePiece::Parse(value, buffer);
@@ -205,11 +212,13 @@ public:
       mapInfo->add(it.second, it.first);
     }
 
+    totalChunks = 0;
     for (auto const &i : accum.fRegions) {
       mcfile::Dimension dimension = i.first;
       for (auto const &j : i.second) {
         Pos2i region = j.first;
         regions[dimension].push_back(make_pair(region, j.second));
+        totalChunks += j.second.fChunks.size();
       }
     }
     for (auto &i : regions) {
@@ -217,8 +226,6 @@ public:
         return a.second.fChunks.size() > b.second.fChunks.size();
       });
     }
-
-    totalChunks = accum.fNumChunks;
 
     players.clear();
     for (auto const &[key, entity] : accum.fPlayers) {
