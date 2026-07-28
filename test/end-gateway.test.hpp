@@ -1,4 +1,31 @@
 #include "bedrock/_context.hpp"
+#include "bedrock/_java-chunk.hpp"
+
+TEST_CASE("bedrock empty Java chunks keep their sections list") {
+  for (auto const &[dataVersion, chunkY, sectionsName] : {
+           std::tuple<int, int, std::u8string>(2730, 0, u8"Sections"),
+           std::tuple<int, int, std::u8string>(4903, -4, u8"sections"),
+       }) {
+    auto chunk = mcfile::je::WritableChunk::MakeEmpty(-3, chunkY, 2);
+    chunk->setDataVersion(dataVersion);
+    auto tag = chunk->toCompoundTag(Dimension::End);
+    REQUIRE(tag);
+
+    auto column = tag->compoundTag(u8"Level");
+    if (!column) {
+      column = tag;
+    }
+    column->erase(sectionsName);
+    CHECK_FALSE(column->tag(sectionsName));
+
+    REQUIRE(bedrock::EnsureJavaChunkSections(*tag));
+    auto sections = column->listTag(sectionsName);
+    REQUIRE(sections);
+    CHECK(sections->fType == Tag::Type::Compound);
+    CHECK(sections->empty());
+    CHECK(mcfile::je::Chunk::MakeChunk(-3, 2, tag));
+  }
+}
 
 TEST_CASE("bedrock End chunk discovery") {
   auto tmp = mcfile::File::CreateTempDir(fs::temp_directory_path());
