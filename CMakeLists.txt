@@ -624,9 +624,6 @@ target_include_directories(p2j PRIVATE ${pbar_SOURCE_DIR})
 add_executable(dump example/dump.cpp ${je2be_header_files})
 target_link_libraries(dump je2be)
 
-add_executable(map2-compare example/map2-compare.cpp ${je2be_header_files})
-target_link_libraries(map2-compare je2be)
-
 add_executable(j2j-uuid example/j2j-uuid.cpp ${je2be_header_files})
 target_link_libraries(j2j-uuid ${je2be_exe_link_libraries} cxxopts)
 
