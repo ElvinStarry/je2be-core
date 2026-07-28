@@ -236,6 +236,7 @@ set(je2be_src_files
   src/bedrock/_context.hpp
   src/bedrock/_entity.hpp
   src/bedrock/_item.hpp
+  src/bedrock/_java-chunk.hpp
   src/bedrock/_java-player.hpp
   src/bedrock/_legacy-block.hpp
   src/bedrock/_level-data.hpp

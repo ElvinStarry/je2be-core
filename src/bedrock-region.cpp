@@ -6,6 +6,7 @@
 #include "_pos2i-set.hpp"
 #include "bedrock/_chunk.hpp"
 #include "bedrock/_context.hpp"
+#include "bedrock/_java-chunk.hpp"
 #include "terraform/_leaves.hpp"
 #include "terraform/java/_block-accessor-java-mca.hpp"
 
@@ -84,6 +85,9 @@ public:
         int localZ = cz - rz * 32;
         auto terrainTag = j->toCompoundTag(d);
         if (!terrainTag) {
+          return JE2BE_ERROR;
+        }
+        if (!EnsureJavaChunkSections(*terrainTag)) {
           return JE2BE_ERROR;
         }
         if (!terrain->insert(localX, localZ, *terrainTag)) {
