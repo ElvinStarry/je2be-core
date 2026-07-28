@@ -498,6 +498,7 @@ public:
       exitPortalJ->set(u8"Y", Int(exitPortalB->fY));
       exitPortalJ->set(u8"Z", Int(exitPortalB->fZ));
       t->set(u8"ExitPortal", exitPortalJ);
+      t->set(u8"ExactTeleport", Bool(true));
     }
     if (auto age = tagB.int32(u8"Age"); age) {
       t->set(u8"Age", Long(*age));
