@@ -493,15 +493,28 @@ public:
   static std::optional<Result> EndGateway(Pos3i const &pos, mcfile::be::Block const &block, CompoundTag const &tagB, mcfile::je::Block const &blockJ, Context &ctx, Options const &opt) {
     auto t = EmptyShortName(u8"end_gateway", pos);
     if (auto exitPortalB = props::GetPos3iFromListTag(tagB, u8"ExitPortal"); exitPortalB) {
-      auto exitPortalJ = Compound();
-      exitPortalJ->set(u8"X", Int(exitPortalB->fX));
-      exitPortalJ->set(u8"Y", Int(exitPortalB->fY));
-      exitPortalJ->set(u8"Z", Int(exitPortalB->fZ));
-      t->set(u8"exit_portal", exitPortalJ);
-      t->set(u8"ExactTeleport", Bool(true));
+      if (opt.fOutputDataVersion >= (int)JavaDataVersions::Release26_2) {
+        // BlockPos fields are encoded as int arrays by the Java 26.2 block entity codec.
+        // Bedrock stores the supporting block while Java exact teleport expects the
+        // player's feet position. Moving one block up keeps the player out of the floor
+        // and avoids Java's non-exact search selecting the elevated gateway frame.
+        Pos3i exitPortalJ(exitPortalB->fX, exitPortalB->fY + 1, exitPortalB->fZ);
+        t->set(u8"exit_portal", IntArrayFromPos3i(exitPortalJ));
+        t->set(u8"exact_teleport", Bool(true));
+      } else {
+        auto exitPortalJ = Compound();
+        exitPortalJ->set(u8"X", Int(exitPortalB->fX));
+        exitPortalJ->set(u8"Y", Int(exitPortalB->fY));
+        exitPortalJ->set(u8"Z", Int(exitPortalB->fZ));
+        t->set(u8"ExitPortal", exitPortalJ);
+      }
     }
     if (auto age = tagB.int32(u8"Age"); age) {
-      t->set(u8"Age", Long(*age));
+      if (opt.fOutputDataVersion >= (int)JavaDataVersions::Release26_2) {
+        t->set(u8"age", Long(*age));
+      } else {
+        t->set(u8"Age", Long(*age));
+      }
     }
     Result r;
     r.fTileEntity = t;

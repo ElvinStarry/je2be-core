@@ -119,12 +119,15 @@ TEST_CASE("end-gateway") {
       auto tile = chunk->tileEntityAt(-77, 75, -56);
       REQUIRE(tile);
       CHECK(tile->string(u8"id") == u8"minecraft:end_gateway");
-      auto exitPortal = tile->compoundTag(u8"ExitPortal");
+      auto exitPortal = props::GetPos3iFromIntArrayTag(*tile, u8"exit_portal");
       REQUIRE(exitPortal);
-      CHECK(exitPortal->int32(u8"X") == -814);
-      CHECK(exitPortal->int32(u8"Y") == 59);
-      CHECK(exitPortal->int32(u8"Z") == -613);
-      CHECK(tile->int64(u8"Age") == 725);
+      CHECK(exitPortal->fX == -814);
+      CHECK(exitPortal->fY == 60);
+      CHECK(exitPortal->fZ == -613);
+      CHECK(tile->int64(u8"age") == 725);
+      CHECK(tile->boolean(u8"exact_teleport") == true);
+      CHECK_FALSE(tile->tag(u8"ExitPortal"));
+      CHECK_FALSE(tile->tag(u8"ExactTeleport"));
     }
     {
       auto chunk = world.chunkAt(-51, -39);
@@ -136,12 +139,15 @@ TEST_CASE("end-gateway") {
       auto tile = chunk->tileEntityAt(-814, 69, -613);
       REQUIRE(tile);
       CHECK(tile->string(u8"id") == u8"minecraft:end_gateway");
-      auto exitPortal = tile->compoundTag(u8"ExitPortal");
+      auto exitPortal = props::GetPos3iFromIntArrayTag(*tile, u8"exit_portal");
       REQUIRE(exitPortal);
-      CHECK(exitPortal->int32(u8"X") == -74);
-      CHECK(exitPortal->int32(u8"Y") == 58);
-      CHECK(exitPortal->int32(u8"Z") == -52);
-      CHECK(tile->int64(u8"Age") == 409);
+      CHECK(exitPortal->fX == -74);
+      CHECK(exitPortal->fY == 59);
+      CHECK(exitPortal->fZ == -52);
+      CHECK(tile->int64(u8"age") == 409);
+      CHECK(tile->boolean(u8"exact_teleport") == true);
+      CHECK_FALSE(tile->tag(u8"ExitPortal"));
+      CHECK_FALSE(tile->tag(u8"ExactTeleport"));
     }
   }
 }
