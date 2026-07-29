@@ -1,3 +1,4 @@
+#include "bedrock/_block-entity.hpp"
 #include "bedrock/_context.hpp"
 #include "bedrock/_java-chunk.hpp"
 
@@ -83,6 +84,56 @@ TEST_CASE("bedrock End chunk discovery") {
 }
 
 TEST_CASE("end-gateway") {
+  SUBCASE("legacy Bedrock chunk") {
+    auto tmp = mcfile::File::CreateTempDir(fs::temp_directory_path());
+    REQUIRE(tmp);
+    defer {
+      fs::remove_all(*tmp);
+    };
+
+    auto dbPath = *tmp / "db";
+    leveldb::Options dbOptions;
+    dbOptions.create_if_missing = true;
+    dbOptions.compression = leveldb::kZlibRawCompression;
+    leveldb::DB *rawDb = nullptr;
+    REQUIRE(leveldb::DB::Open(dbOptions, dbPath, &rawDb).ok());
+    std::unique_ptr<leveldb::DB> db(rawDb);
+    db.reset();
+
+    bedrock::Options options;
+    options.fTempDirectory = *tmp;
+    std::map<Dimension, std::vector<std::pair<Pos2i, bedrock::Context::ChunksInRegion>>> regions;
+    u64 totalChunks = 0;
+    std::vector<bedrock::Context::PlayerData> players;
+    std::unique_ptr<bedrock::Context> context;
+    REQUIRE(bedrock::Context::Init(dbPath, options, Encoding::LittleEndian, regions, totalChunks, 0, GameMode::Survival, 1, players, context).ok());
+
+    auto states = Compound();
+    mcfile::be::Block blockB(u8"minecraft:end_gateway", states, java::kBlockDataVersion);
+    auto blockJ = mcfile::je::Block::FromName(u8"minecraft:end_gateway", kJavaDataVersionMaxLegacy);
+    REQUIRE(blockJ);
+
+    auto exitPortalB = List<Tag::Type::Int>();
+    exitPortalB->push_back(Int(-1286));
+    exitPortalB->push_back(Int(88));
+    exitPortalB->push_back(Int(-3));
+    auto tagB = Compound();
+    tagB->set(u8"ExitPortal", exitPortalB);
+    tagB->set(u8"Age", Int(143764));
+
+    auto converted = bedrock::BlockEntity::FromBlockAndBlockEntity(Pos3i(-96, 75, 0), blockB, *tagB, *blockJ, *context, kJavaDataVersionMaxLegacy, false);
+    REQUIRE(converted);
+    REQUIRE(converted->fTileEntity);
+    auto exitPortalJ = props::GetPos3iFromIntArrayTag(*converted->fTileEntity, u8"exit_portal");
+    REQUIRE(exitPortalJ);
+    CHECK(exitPortalJ->fX == -1286);
+    CHECK(exitPortalJ->fY == 89);
+    CHECK(exitPortalJ->fZ == -3);
+    CHECK(converted->fTileEntity->int64(u8"age") == 143764);
+    CHECK(converted->fTileEntity->boolean(u8"exact_teleport") == true);
+    CHECK_FALSE(converted->fTileEntity->tag(u8"ExitPortal"));
+  }
+
   SUBCASE("bedrock") {
     fs::path thisFile(__FILE__);
     auto mcworld = thisFile.parent_path() / "data" / "end-gateway" / "bedrock" / "end-gateway.mcworld";
@@ -119,12 +170,15 @@ TEST_CASE("end-gateway") {
       auto tile = chunk->tileEntityAt(-77, 75, -56);
       REQUIRE(tile);
       CHECK(tile->string(u8"id") == u8"minecraft:end_gateway");
-      auto exitPortal = tile->compoundTag(u8"ExitPortal");
+      auto exitPortal = props::GetPos3iFromIntArrayTag(*tile, u8"exit_portal");
       REQUIRE(exitPortal);
-      CHECK(exitPortal->int32(u8"X") == -814);
-      CHECK(exitPortal->int32(u8"Y") == 59);
-      CHECK(exitPortal->int32(u8"Z") == -613);
-      CHECK(tile->int64(u8"Age") == 725);
+      CHECK(exitPortal->fX == -814);
+      CHECK(exitPortal->fY == 60);
+      CHECK(exitPortal->fZ == -613);
+      CHECK(tile->int64(u8"age") == 725);
+      CHECK(tile->boolean(u8"exact_teleport") == true);
+      CHECK_FALSE(tile->tag(u8"ExitPortal"));
+      CHECK_FALSE(tile->tag(u8"ExactTeleport"));
     }
     {
       auto chunk = world.chunkAt(-51, -39);
@@ -136,12 +190,15 @@ TEST_CASE("end-gateway") {
       auto tile = chunk->tileEntityAt(-814, 69, -613);
       REQUIRE(tile);
       CHECK(tile->string(u8"id") == u8"minecraft:end_gateway");
-      auto exitPortal = tile->compoundTag(u8"ExitPortal");
+      auto exitPortal = props::GetPos3iFromIntArrayTag(*tile, u8"exit_portal");
       REQUIRE(exitPortal);
-      CHECK(exitPortal->int32(u8"X") == -74);
-      CHECK(exitPortal->int32(u8"Y") == 58);
-      CHECK(exitPortal->int32(u8"Z") == -52);
-      CHECK(tile->int64(u8"Age") == 409);
+      CHECK(exitPortal->fX == -74);
+      CHECK(exitPortal->fY == 59);
+      CHECK(exitPortal->fZ == -52);
+      CHECK(tile->int64(u8"age") == 409);
+      CHECK(tile->boolean(u8"exact_teleport") == true);
+      CHECK_FALSE(tile->tag(u8"ExitPortal"));
+      CHECK_FALSE(tile->tag(u8"ExactTeleport"));
     }
   }
 }
