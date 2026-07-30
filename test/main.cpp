@@ -49,3 +49,4 @@ static fs::path ProjectRootDir() {
 #include "parallel.test.hpp"
 #include "java-uuid-replacer.test.hpp"
 #include "new-content-26.2.test.hpp"
+#include "world-data-override.test.hpp"

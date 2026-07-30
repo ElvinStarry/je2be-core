@@ -72,6 +72,7 @@ set(je2be_header_files
   include/je2be/status.hpp
   include/je2be/strings.hpp
   include/je2be/uuid.hpp
+  include/je2be/world-data-override.hpp
   include/je2be/xbox360/converter.hpp
   include/je2be/xbox360/minecraft-save-info.hpp
   include/je2be/zip-file.hpp
@@ -213,6 +214,7 @@ set(je2be_src_files
   src/_version.hpp
   src/_volume.hpp
   src/_walk.hpp
+  src/_world-data-override.hpp
   src/bedrock-block-data.cpp
   src/bedrock-block-entity-before-components-introduced.hpp
   src/bedrock-block-entity.cpp
@@ -449,7 +451,8 @@ set(test_files
   test/bedrock-java-player.test.hpp
   test/parallel.test.hpp
   test/java-uuid-replacer.test.hpp
-  test/new-content-26.2.test.hpp)
+  test/new-content-26.2.test.hpp
+  test/world-data-override.test.hpp)
 
 if (NOT WIN32)
   list(APPEND je2be_link_libraries pthread)
@@ -605,11 +608,11 @@ endif()
 target_link_directories(je2be INTERFACE ${je2be_link_directories})
 target_compile_definitions(je2be PUBLIC -DXXH_NAMESPACE=LZ4_)
 
-add_executable(j2b example/j2b.cpp ${je2be_header_files})
+add_executable(j2b example/j2b.cpp example/cli-world-data-overrides.hpp ${je2be_header_files})
 target_link_libraries(j2b ${je2be_exe_link_libraries} cxxopts)
 target_include_directories(j2b PRIVATE ${pbar_SOURCE_DIR})
 
-add_executable(b2j example/b2j.cpp ${je2be_header_files})
+add_executable(b2j example/b2j.cpp example/cli-world-data-overrides.hpp ${je2be_header_files})
 target_link_libraries(b2j ${je2be_exe_link_libraries} cxxopts)
 target_include_directories(b2j PRIVATE ${pbar_SOURCE_DIR})
 
@@ -657,6 +660,6 @@ if (MSVC)
   endif()
 endif()
 
-list(APPEND all_files ${test_files} ${je2be_header_files} ${je2be_src_files} example/j2b.cpp example/b2j.cpp example/lce-progress.hpp example/x2j.cpp example/p2j.cpp example/dump.cpp example/j2j-uuid.cpp test/j2b2j.cpp)
+list(APPEND all_files ${test_files} ${je2be_header_files} ${je2be_src_files} example/j2b.cpp example/b2j.cpp example/cli-world-data-overrides.hpp example/lce-progress.hpp example/x2j.cpp example/p2j.cpp example/dump.cpp example/j2j-uuid.cpp test/j2b2j.cpp)
 source_group(TREE ${CMAKE_CURRENT_LIST_DIR} FILES ${all_files})
 source_group(TREE ${libminecraft-file_SOURCE_DIR} PREFIX deps/mcfile FILES ${mcfile_header_files})

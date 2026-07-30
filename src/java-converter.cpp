@@ -15,6 +15,7 @@
 
 #include "_directory-iterator.hpp"
 #include "_parallel.hpp"
+#include "_world-data-override.hpp"
 #include "db/_concurrent-db.hpp"
 #include "java/_context.hpp"
 #include "java/_datapacks.hpp"
@@ -190,7 +191,11 @@ public:
         level.fExperiments[ex] = true;
       }
       level.fCheatsEnabled = levelData->fAllowCommand;
-      ok = level.write(output / "level.dat");
+      auto outputLevelData = level.toBedrockCompoundTag();
+      if (auto st = WorldDataOverrideEngine::ApplyBedrock(*outputLevelData, o.fWorldDataOverrides); !st.ok()) {
+        return JE2BE_ERROR_PUSH(st);
+      }
+      ok = Level::Write(*outputLevelData, output / "level.dat");
       if (ok) {
         if (auto st = levelData->put(db, *data, levelData->fUuids); !st.ok()) {
           return JE2BE_ERROR_PUSH(st);

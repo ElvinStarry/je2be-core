@@ -1,7 +1,10 @@
 #pragma once
 
+#include <vector>
+
 #include <je2be/enums/level-directory-structure.hpp>
 #include <je2be/pos2.hpp>
+#include <je2be/world-data-override.hpp>
 
 namespace je2be::java {
 
@@ -12,6 +15,7 @@ public:
   std::unordered_set<Pos2i, Pos2iHasher> fChunkFilter;
   std::optional<std::filesystem::path> fTempDirectory;
   std::optional<std::filesystem::path> fDbTempDirectory;
+  std::vector<WorldDataOverride> fWorldDataOverrides;
 
   std::filesystem::path getWorldDirectory(std::filesystem::path const &root, mcfile::Dimension dim) const {
     using namespace mcfile;

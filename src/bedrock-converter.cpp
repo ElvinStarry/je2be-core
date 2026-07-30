@@ -9,6 +9,7 @@
 #include "_props.hpp"
 #include "_queue2d.hpp"
 #include "_walk.hpp"
+#include "_world-data-override.hpp"
 #include "bedrock/_context.hpp"
 #include "bedrock/_java-chunk.hpp"
 #include "bedrock/_java-player.hpp"
@@ -190,24 +191,21 @@ public:
 
     LevelData::UpdateDataPacksAndEnabledFeatures(*levelDat, *bin);
 
+    WorldDataOverrideEngine::JavaDocuments worldData;
+    worldData.fLevel = levelDat->compoundTag(u8"Data");
+    if (!worldData.fLevel) {
+      worldData.fLevel = Compound();
+      levelDat->set(u8"Data", worldData.fLevel);
+    }
+
     if constexpr (kJavaDataVersion >= 4903) {
       if (auto data = levelDat->compoundTag(u8"Data"); data) {
         data->erase(u8"Player");
 
-        auto dataDir = output / u8"data" / u8"minecraft";
-        error_code ec;
-        fs::create_directories(dataDir, ec);
-
         // Move WorldGenSettings to data/minecraft/world_gen_settings.dat
         if (auto wgs = data->compoundTag(u8"WorldGenSettings"); wgs) {
           data->erase(u8"WorldGenSettings");
-          auto wgsTag = Compound();
-          wgsTag->set(u8"data", wgs);
-          wgsTag->set(u8"DataVersion", Int(kJavaDataVersion));
-          auto s = make_shared<mcfile::stream::GzFileOutputStream>(dataDir / u8"world_gen_settings.dat");
-          if (!CompoundTag::Write(*wgsTag, s, mcfile::Encoding::Java)) {
-            return JE2BE_ERROR;
-          }
+          worldData.fWorldGenSettings = wgs;
         }
 
         // Remove GameRules from level.dat and write to data/minecraft/game_rules.dat
@@ -290,13 +288,7 @@ public:
               }
             }
           }
-          auto rulesTag = Compound();
-          rulesTag->set(u8"data", rulesJ);
-          rulesTag->set(u8"DataVersion", Int(kJavaDataVersion));
-          auto s = make_shared<mcfile::stream::GzFileOutputStream>(dataDir / u8"game_rules.dat");
-          if (!CompoundTag::Write(*rulesTag, s, mcfile::Encoding::Java)) {
-            return JE2BE_ERROR;
-          }
+          worldData.fGameRules = rulesJ;
         }
 
         // Move weather data to data/minecraft/weather.dat
@@ -311,13 +303,7 @@ public:
           data->erase(u8"raining");
           data->erase(u8"thunderTime");
           data->erase(u8"thundering");
-          auto weatherTag = Compound();
-          weatherTag->set(u8"data", weather);
-          weatherTag->set(u8"DataVersion", Int(kJavaDataVersion));
-          auto s = make_shared<mcfile::stream::GzFileOutputStream>(dataDir / u8"weather.dat");
-          if (!CompoundTag::Write(*weatherTag, s, mcfile::Encoding::Java)) {
-            return JE2BE_ERROR;
-          }
+          worldData.fWeather = weather;
         }
 
         // Move time data to data/minecraft/world_clocks.dat
@@ -335,13 +321,7 @@ public:
           nether->set(u8"total_ticks", Long(time));
           clocks->set(u8"minecraft:the_nether", nether);
           data->erase(u8"DayTime");
-          auto clocksTag = Compound();
-          clocksTag->set(u8"data", clocks);
-          clocksTag->set(u8"DataVersion", Int(kJavaDataVersion));
-          auto s = make_shared<mcfile::stream::GzFileOutputStream>(dataDir / u8"world_clocks.dat");
-          if (!CompoundTag::Write(*clocksTag, s, mcfile::Encoding::Java)) {
-            return JE2BE_ERROR;
-          }
+          worldData.fWorldClocks = clocks;
         }
 
         // Convert Difficulty/hardcore to difficulty_settings
@@ -397,21 +377,66 @@ public:
 
           fightJ->set(u8"respawn_time", Int(0));
 
-          auto enderDragonFightDir = output / u8"dimensions" / u8"minecraft" / u8"the_end" / u8"data" / u8"minecraft";
-          Fs::CreateDirectories(enderDragonFightDir);
-          auto edfTag = Compound();
-          edfTag->set(u8"data", fightJ);
-          edfTag->set(u8"DataVersion", Int(kJavaDataVersion));
-          auto edfPath = enderDragonFightDir / u8"ender_dragon_fight.dat";
-          auto edfStream = make_shared<mcfile::stream::GzFileOutputStream>(edfPath);
-          if (!CompoundTag::Write(*edfTag, edfStream, mcfile::Encoding::Java)) {
-            return JE2BE_ERROR;
-          }
+          worldData.fEnderDragonFight = fightJ;
         }
 
         // Add singleplayer_uuid from local player
         if (resolvedLocalPlayerUuid) {
           data->set(u8"singleplayer_uuid", resolvedLocalPlayerUuid->toIntArrayTag());
+        }
+      }
+    }
+
+    if constexpr (kJavaDataVersion < 4903) {
+      worldData.fGameRules = worldData.fLevel->compoundTag(u8"GameRules");
+      worldData.fWorldGenSettings = worldData.fLevel->compoundTag(u8"WorldGenSettings");
+    }
+
+    if (auto st = WorldDataOverrideEngine::ApplyJava(worldData, options.fWorldDataOverrides); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
+    }
+
+    if constexpr (kJavaDataVersion < 4903) {
+      if (worldData.fGameRules) {
+        worldData.fLevel->set(u8"GameRules", worldData.fGameRules);
+      }
+      if (worldData.fWorldGenSettings) {
+        worldData.fLevel->set(u8"WorldGenSettings", worldData.fWorldGenSettings);
+      }
+    }
+
+    if constexpr (kJavaDataVersion >= 4903) {
+      auto writeDataFile = [](CompoundTagPtr const &data, fs::path const &path) -> bool {
+        if (!data) {
+          return true;
+        }
+        auto root = Compound();
+        root->set(u8"data", data);
+        root->set(u8"DataVersion", Int(kJavaDataVersion));
+        auto stream = make_shared<mcfile::stream::GzFileOutputStream>(path);
+        return CompoundTag::Write(*root, stream, mcfile::Encoding::Java);
+      };
+
+      auto dataDir = output / u8"data" / u8"minecraft";
+      error_code ec;
+      fs::create_directories(dataDir, ec);
+      if (ec) {
+        return JE2BE_ERROR_WHAT(ec.message());
+      }
+      if (!writeDataFile(worldData.fWorldGenSettings, dataDir / u8"world_gen_settings.dat") ||
+          !writeDataFile(worldData.fGameRules, dataDir / u8"game_rules.dat") ||
+          !writeDataFile(worldData.fWeather, dataDir / u8"weather.dat") ||
+          !writeDataFile(worldData.fWorldClocks, dataDir / u8"world_clocks.dat")) {
+        return JE2BE_ERROR;
+      }
+
+      if (worldData.fEnderDragonFight) {
+        auto enderDragonFightDir = output / u8"dimensions" / u8"minecraft" / u8"the_end" / u8"data" / u8"minecraft";
+        if (!Fs::CreateDirectories(enderDragonFightDir)) {
+          return JE2BE_ERROR;
+        }
+        if (!writeDataFile(worldData.fEnderDragonFight, enderDragonFightDir / u8"ender_dragon_fight.dat")) {
+          return JE2BE_ERROR;
         }
       }
     }

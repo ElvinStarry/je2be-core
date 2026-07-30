@@ -7,6 +7,8 @@
 #include <defer.hpp>
 #include <pbar.hpp>
 
+#include "cli-world-data-overrides.hpp"
+
 #include <iostream>
 #include <string>
 #include <thread>
@@ -138,13 +140,26 @@ int main(int argc, char *argv[]) {
 
   cxxopts::Options parser("j2b");
   parser.add_options()                                                                                               //
-      ("i", "input directory", cxxopts::value<string>())                                                             //
-      ("o", "output directory", cxxopts::value<string>())                                                            //
+      ("i,input", "input directory", cxxopts::value<string>())                                                       //
+      ("o,output", "output directory", cxxopts::value<string>())                                                     //
       ("n", "num threads", cxxopts::value<unsigned int>()->default_value(to_string(thread::hardware_concurrency()))) //
-      ("s", "directory structure", cxxopts::value<string>()->default_value("vanilla"));
+      ("s", "directory structure", cxxopts::value<string>()->default_value("vanilla"))                              //
+      ("O,override", "override target world data; accepts one or more key=value arguments", cxxopts::value<vector<string>>());
+
+  vector<string> cliArguments;
+  vector<WorldDataOverride> overrides;
+  string overrideError;
+  if (!je2be::cli::ExtractWorldDataOverrides(argc, argv, cliArguments, overrides, overrideError)) {
+    cerr << overrideError << endl;
+    cerr << parser.help() << endl;
+    return -1;
+  }
+  auto cliArgv = je2be::cli::MutableArgv(cliArguments);
+  int cliArgc = static_cast<int>(cliArgv.size());
+
   cxxopts::ParseResult result;
   try {
-    result = parser.parse(argc, argv);
+    result = parser.parse(cliArgc, cliArgv.data());
   } catch (cxxopts::exceptions::exception &e) {
     cerr << e.what() << endl;
     cerr << parser.help() << endl;
@@ -185,6 +200,7 @@ int main(int argc, char *argv[]) {
   };
 
   Options options;
+  options.fWorldDataOverrides = std::move(overrides);
   options.fLevelDirectoryStructure = structure;
   options.fTempDirectory = mcfile::File::CreateTempDir(fs::temp_directory_path());
   options.fDbTempDirectory = mcfile::File::CreateTempDir(fs::temp_directory_path());

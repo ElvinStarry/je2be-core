@@ -256,7 +256,7 @@ public:
     return root;
   }
 
-  [[nodiscard]] bool write(std::filesystem::path path) const {
+  [[nodiscard]] static bool Write(CompoundTag const &tag, std::filesystem::path path) {
     auto stream = std::make_shared<mcfile::stream::FileOutputStream>(path);
     mcfile::stream::OutputStreamWriter w(stream, mcfile::Encoding::LittleEndian);
     if (!w.write((u32)8)) {
@@ -265,8 +265,7 @@ public:
     if (!w.write((u32)0)) {
       return false;
     }
-    auto tag = this->toBedrockCompoundTag();
-    if (!CompoundTag::Write(*tag, w)) {
+    if (!CompoundTag::Write(tag, w)) {
       return false;
     }
     u64 pos = stream->pos();
@@ -274,6 +273,11 @@ public:
       return false;
     }
     return w.write((u32)pos - 8);
+  }
+
+  [[nodiscard]] bool write(std::filesystem::path path) const {
+    auto tag = this->toBedrockCompoundTag();
+    return Write(*tag, path);
   }
 
   static Level ImportFromJava(CompoundTag const &tag) {

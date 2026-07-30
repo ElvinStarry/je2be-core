@@ -2,9 +2,11 @@
 
 #include <functional>
 #include <unordered_set>
+#include <vector>
 
 #include <je2be/pos2.hpp>
 #include <je2be/uuid.hpp>
+#include <je2be/world-data-override.hpp>
 
 namespace je2be::bedrock {
 
@@ -20,6 +22,7 @@ public:
   std::shared_ptr<Uuid const> fLocalPlayer;
   std::function<std::optional<Uuid>(std::u8string const &)> fJavaPlayerUuidResolver;
   std::optional<std::filesystem::path> fTempDirectory;
+  std::vector<WorldDataOverride> fWorldDataOverrides;
 };
 
 } // namespace je2be::bedrock

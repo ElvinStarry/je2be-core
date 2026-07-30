@@ -30,3 +30,4 @@
 #include <je2be/strings.hpp>
 #include <je2be/fs.hpp>
 #include <je2be/zip-file.hpp>
+#include <je2be/world-data-override.hpp>
