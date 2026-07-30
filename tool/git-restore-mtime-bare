@@ -53,7 +53,7 @@ for path in (sys.argv[1:] or [os.path.curdir]):
 
 # Process the log until all files are 'touched'
 mtime = 0
-gitobj = subprocess.Popen(shlex.split('git whatchanged --pretty=%at'),
+gitobj = subprocess.Popen(shlex.split('git log --raw --no-merges --pretty=%at'),
                           stdout=subprocess.PIPE)
 for line in gitobj.stdout:
     line = line.strip().decode()
