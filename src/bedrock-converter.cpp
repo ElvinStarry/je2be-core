@@ -5,15 +5,17 @@
 #include <je2be/nbt.hpp>
 #include <je2be/strings.hpp>
 
+#include <defer.hpp>
+
 #include "_data-version.hpp"
 #include "_props.hpp"
-#include "_queue2d.hpp"
 #include "_walk.hpp"
 #include "_world-data-override.hpp"
 #include "bedrock/_context.hpp"
 #include "bedrock/_java-chunk.hpp"
 #include "bedrock/_java-player.hpp"
 #include "bedrock/_level-data.hpp"
+#include "bedrock/_terraform-region-scheduler.hpp"
 #include "bedrock/_world.hpp"
 #include "db/_readonly-db.hpp"
 #include "enums/_game-mode.hpp"
@@ -21,13 +23,9 @@
 #include "terraform/java/_block-accessor-java-directory.hpp"
 #include "terraform/lighting/_lighting.hpp"
 
-#include <sparse.hpp>
-
 #include <atomic>
 #include <exception>
 #include <fstream>
-#include <latch>
-#include <thread>
 
 using namespace std;
 namespace fs = std::filesystem;
@@ -144,21 +142,80 @@ public:
       }
     };
 
-    map<Dimension, fs::path> terrainTempDirs;
+    atomic_uint64_t numTerraformedChunks(0);
+    if (total > 0 && progress && !progress->reportTerraform({0, total}, 0)) {
+      return JE2BE_ERROR;
+    }
+
     for (Dimension d : {Dimension::Overworld, Dimension::Nether, Dimension::End}) {
       if (!effectiveOptions.fDimensionFilter.empty()) {
         if (effectiveOptions.fDimensionFilter.find(d) == effectiveOptions.fDimensionFilter.end()) {
           continue;
         }
       }
-      auto terrainTempDir = File::CreateTempDir(effectiveOptions.getTempDirectory());
-      if (!terrainTempDir) {
+      auto foundRegions = regions.find(d);
+      if (foundRegions == regions.end() || foundRegions->second.empty()) {
+        continue;
+      }
+      auto createdTempDir = File::CreateTempDir(effectiveOptions.getTempDirectory());
+      if (!createdTempDir) {
         return JE2BE_ERROR;
       }
-      terrainTempDirs[d] = *terrainTempDir;
+      fs::path terrainTempDir = *createdTempDir;
+      defer {
+        Fs::DeleteAll(terrainTempDir);
+      };
+
+      auto &regionsInDimension = foundRegions->second;
+      vector<Pos2i> regionPositions;
+      regionPositions.reserve(regionsInDimension.size());
+      unordered_map<Pos2i, Context::ChunksInRegion const *, Pos2iHasher> chunksByRegion;
+      chunksByRegion.reserve(regionsInDimension.size());
+      for (auto const &[region, chunks] : regionsInDimension) {
+        regionPositions.push_back(region);
+        chunksByRegion.emplace(region, &chunks);
+      }
+      TerraformRegionScheduler scheduler(regionPositions);
+      fs::path terrainOutputDir = TerrainOutputDirectory(output, d);
+
+      auto regionConverted = [&scheduler, &chunksByRegion, terrainTempDir, terrainOutputDir, d, &numTerraformedChunks, total, progress](Pos2i const &converted) -> Status {
+        auto ready = scheduler.markConverted(converted);
+        if (!ready) {
+          return JE2BE_ERROR_WHAT("Invalid Terraform conversion state for region [" + std::to_string(converted.fX) + ", " + std::to_string(converted.fZ) + "]");
+        }
+        for (Pos2i const &region : *ready) {
+          auto chunks = chunksByRegion.find(region);
+          if (chunks == chunksByRegion.end() || !chunks->second) {
+            return JE2BE_ERROR_WHAT("Missing chunks for Terraform region [" + std::to_string(region.fX) + ", " + std::to_string(region.fZ) + "]");
+          }
+          if (auto st = TerraformRegion(region, *chunks->second, terrainOutputDir, terrainTempDir, d, numTerraformedChunks, total, progress); !st.ok()) {
+            return JE2BE_ERROR_PUSH(st);
+          }
+
+          auto releasable = scheduler.markCompleted(region);
+          if (!releasable) {
+            return JE2BE_ERROR_WHAT("Invalid Terraform completion state for region [" + std::to_string(region.fX) + ", " + std::to_string(region.fZ) + "]");
+          }
+          for (Pos2i const &source : *releasable) {
+            auto name = mcfile::je::Region::GetDefaultRegionFileName(source.fX, source.fZ);
+            auto file = terrainTempDir / name;
+            error_code ec;
+            bool removed = fs::remove(file, ec);
+            if (ec || !removed) {
+              string why = ec ? ec.message() : "file does not exist";
+              return JE2BE_ERROR_WHAT("Failed to release temporary region " + file.string() + ": " + why);
+            }
+          }
+        }
+        return Status::Ok();
+      };
+
       shared_ptr<Context> result;
-      if (auto st = World::Convert(d, regions[d], *db, output, concurrency, *bin, result, reportProgress, numConvertedChunks, *terrainTempDir); !st.ok()) {
+      if (auto st = World::Convert(d, regionsInDimension, *db, output, concurrency, *bin, result, reportProgress, numConvertedChunks, terrainTempDir, regionConverted); !st.ok()) {
         return JE2BE_ERROR_PUSH(st);
+      }
+      if (!scheduler.allCompleted()) {
+        return JE2BE_ERROR_WHAT("Terraform did not complete all regions in dimension " + std::to_string(static_cast<int>(d)));
       }
       if (result) {
         result->mergeInto(*bin);
@@ -168,11 +225,11 @@ public:
       }
     }
 
-    if (auto st = Terraform(regions, output, terrainTempDirs, concurrency, progress); !st.ok()) {
-      return JE2BE_ERROR_PUSH(st);
+    if (numTerraformedChunks.load() != total) {
+      return JE2BE_ERROR_WHAT("Terraform processed " + std::to_string(numTerraformedChunks.load()) + " of " + std::to_string(total) + " chunks");
     }
-    for (auto const &[_, dir] : terrainTempDirs) {
-      Fs::DeleteAll(dir);
+    if (total > 0 && progress && !progress->reportTerraform({total, total}, total)) {
+      return JE2BE_ERROR;
     }
 
     CompoundTagPtr localPlayer;
@@ -680,237 +737,81 @@ private:
     }
   }
 
-  static Status Terraform(
-      map<mcfile::Dimension, vector<pair<Pos2i, Context::ChunksInRegion>>> const &regions,
-      fs::path const &output,
-      map<mcfile::Dimension, fs::path> const &terrainTempDirs,
-      unsigned int concurrency,
+  static fs::path TerrainOutputDirectory(fs::path const &output, mcfile::Dimension dim) {
+    if constexpr (kJavaDataVersion >= 4903) {
+      auto base = output / u8"dimensions" / u8"minecraft";
+      switch (dim) {
+      case mcfile::Dimension::Nether:
+        return base / u8"the_nether" / u8"region";
+      case mcfile::Dimension::End:
+        return base / u8"the_end" / u8"region";
+      case mcfile::Dimension::Overworld:
+      default:
+        return base / u8"overworld" / u8"region";
+      }
+    } else {
+      switch (dim) {
+      case mcfile::Dimension::Nether:
+        return output / "DIM-1" / "region";
+      case mcfile::Dimension::End:
+        return output / "DIM1" / "region";
+      case mcfile::Dimension::Overworld:
+      default:
+        return output / "region";
+      }
+    }
+  }
+
+  static Status TerraformRegion(
+      Pos2i region,
+      Context::ChunksInRegion const &chunksInRegion,
+      fs::path const &outputDirectory,
+      fs::path const &inputDirectory,
+      mcfile::Dimension dim,
+      atomic_uint64_t &done,
+      u64 numChunks,
       Progress *progress) {
-    if (regions.empty()) {
-      return Status::Ok();
+    int const rx = region.fX;
+    int const rz = region.fZ;
+    auto name = mcfile::je::Region::GetDefaultRegionFileName(rx, rz);
+    auto mcaIn = inputDirectory / name;
+    auto mcaOut = outputDirectory / name;
+
+    error_code ec;
+    if (!fs::is_regular_file(mcaIn, ec) || ec) {
+      return JE2BE_ERROR_WHAT("Missing temporary region: " + mcaIn.string());
+    }
+    auto editor = mcfile::je::McaEditor::Open(mcaIn);
+    if (!editor) {
+      return JE2BE_ERROR_WHAT("Failed to open temporary region: " + mcaIn.string());
     }
 
-    using Queue = Queue2d<0, true, Sparse>;
-    map<mcfile::Dimension, shared_ptr<Queue>> queues;
-    u64 numChunks = 0;
-
-    for (auto const &i : regions) {
-      if (i.second.empty()) {
-        continue;
-      }
-      Pos2i minR = i.second[0].first;
-      Pos2i maxR = minR;
-      for (auto const &j : i.second) {
-        Pos2i const &region = j.first;
-        int minRx = (std::min)(minR.fX, region.fX);
-        int maxRx = (std::max)(maxR.fX, region.fX);
-        int minRz = (std::min)(minR.fZ, region.fZ);
-        int maxRz = (std::max)(maxR.fZ, region.fZ);
-        minR = Pos2i(minRx, minRz);
-        maxR = Pos2i(maxRx, maxRz);
-        numChunks += j.second.fChunks.size();
-      }
-
-      int width = maxR.fX - minR.fX + 1;
-      int height = maxR.fZ - minR.fZ + 1;
-      auto queue = make_shared<Queue>(minR, width, height);
-      for (auto const &j : i.second) {
-        Pos2i const &region = j.first;
-        queue->markTask(region, j.second.fChunks.size());
-      }
-      queues[i.first] = queue;
+    vector<Pos2i> chunks;
+    chunks.reserve(chunksInRegion.fChunks.size());
+    for (Pos2i const &chunk : chunksInRegion.fChunks) {
+      chunks.push_back(chunk);
     }
+    sort(chunks.begin(), chunks.end(), [](Pos2i const &a, Pos2i const &b) {
+      return a.fZ == b.fZ ? a.fX < b.fX : a.fZ < b.fZ;
+    });
 
-    if (progress) {
-      if (!progress->reportTerraform({0, numChunks}, 0)) {
-        return JE2BE_ERROR;
+    terraform::lighting::LightCache lightCache(rx, rz);
+    shared_ptr<terraform::java::BlockAccessorJavaDirectory<3, 3>> blockAccessor;
+    for (Pos2i const &chunk : chunks) {
+      if (auto st = TerraformChunk(chunk.fX, chunk.fZ, *editor, inputDirectory, blockAccessor, dim, lightCache); !st.ok()) {
+        return JE2BE_ERROR_PUSH(st);
+      }
+      lightCache.dispose(chunk.fX - 1, chunk.fZ - 1);
+
+      u64 count = done.fetch_add(1) + 1;
+      if (progress && !progress->reportTerraform({count, numChunks}, count)) {
+        return JE2BE_ERROR_WHAT("Terraform cancelled");
       }
     }
 
-    int numThreads = (int)concurrency - 1;
-    unique_ptr<std::latch> latch;
-    if (concurrency > 0) {
-      latch.reset(new std::latch(concurrency));
-    }
-    std::latch *latchPtr = latch.get();
-    atomic_bool ok(true);
-    mutex mut;
-    atomic_uint64_t done(0);
-    Status status;
-
-    auto action = [latchPtr, &queues, &mut, output, &ok, terrainTempDirs, regions, &done, &status, progress, numChunks]() {
-      shared_ptr<terraform::java::BlockAccessorJavaDirectory<3, 3>> blockAccessor;
-      optional<mcfile::Dimension> prevDimension;
-      auto fail = [&ok, &mut, &status](Status const &error) {
-        lock_guard<mutex> lock(mut);
-        Status::Merge(error, status);
-        ok = false;
-      };
-
-      while (ok) {
-        optional<pair<mcfile::Dimension, Pos2i>> next;
-        shared_ptr<Queue> queue;
-        bool remaining = false;
-        {
-          lock_guard<mutex> lock(mut);
-          for (auto const &it : queues) {
-            if (auto n = it.second->next(); n) {
-              remaining = true;
-              if (holds_alternative<Queue::Dequeue>(*n)) {
-                next = make_pair(it.first, get<Queue::Dequeue>(*n).fRegion);
-                queue = it.second;
-                break;
-              }
-            }
-          }
-        }
-        if (!next || !queue) {
-          if (remaining) {
-            this_thread::sleep_for(chrono::milliseconds(10));
-            continue;
-          } else {
-            break;
-          }
-        }
-
-        mcfile::Dimension dim = next->first;
-        if (dim != prevDimension) {
-          blockAccessor.reset();
-          prevDimension = dim;
-        }
-
-        Pos2i region = next->second;
-        int rx = region.fX;
-        int rz = region.fZ;
-
-        fs::path directory;
-        if constexpr (kJavaDataVersion >= 4903) {
-          auto base = output / u8"dimensions" / u8"minecraft";
-          switch (dim) {
-          case mcfile::Dimension::Nether:
-            directory = base / u8"the_nether" / u8"region";
-            break;
-          case mcfile::Dimension::End:
-            directory = base / u8"the_end" / u8"region";
-            break;
-          case mcfile::Dimension::Overworld:
-          default:
-            directory = base / u8"overworld" / u8"region";
-            break;
-          }
-        } else {
-          switch (dim) {
-          case mcfile::Dimension::Nether:
-            directory = output / "DIM-1" / "region";
-            break;
-          case mcfile::Dimension::End:
-            directory = output / "DIM1" / "region";
-            break;
-          case mcfile::Dimension::Overworld:
-          default:
-            directory = output / "region";
-            break;
-          }
-        }
-
-        auto found = terrainTempDirs.find(dim);
-        if (found == terrainTempDirs.end()) {
-          fail(JE2BE_ERROR_WHAT("Missing temporary terrain directory"));
-          break;
-        }
-
-        auto name = mcfile::je::Region::GetDefaultRegionFileName(rx, rz);
-        auto mcaIn = found->second / name;
-        auto mcaOut = directory / name;
-        auto editor = mcfile::je::McaEditor::Open(mcaIn);
-        if (!editor) {
-          fail(JE2BE_ERROR_WHAT("Failed to open temporary region: " + mcaIn.string()));
-          break;
-        }
-
-        auto regionsInDim = regions.find(dim);
-        if (regionsInDim == regions.end()) {
-          fail(JE2BE_ERROR_WHAT("Missing region list for dimension " + std::to_string(static_cast<int>(dim))));
-          break;
-        }
-
-        Context::ChunksInRegion chunksInRegion;
-        bool foundRegion = false;
-        for (auto const &r : regionsInDim->second) {
-          if (r.first == region) {
-            chunksInRegion = r.second;
-            foundRegion = true;
-            break;
-          }
-        }
-        if (!foundRegion) {
-          fail(JE2BE_ERROR_WHAT("Missing chunk list for region [" + std::to_string(rx) + ", " + std::to_string(rz) + "]"));
-          break;
-        }
-
-        terraform::lighting::LightCache lightCache(rx, rz);
-
-        for (int z = 0; z < 32; z++) {
-          for (int x = 0; x < 32; x++) {
-            int cx = x + rx * 32;
-            int cz = z + rz * 32;
-            if (chunksInRegion.fChunks.find(Pos2i(cx, cz)) != chunksInRegion.fChunks.end()) {
-              auto chunkStatus = TerraformChunk(cx, cz, *editor, found->second, blockAccessor, dim, lightCache);
-              if (!chunkStatus.ok()) {
-                fail(JE2BE_ERROR_PUSH(chunkStatus));
-                break;
-              }
-              u64 d = done.fetch_add(1) + 1;
-              if (progress && !progress->reportTerraform({d, numChunks}, d)) {
-                fail(JE2BE_ERROR_WHAT("Terraform cancelled"));
-                break;
-              }
-            }
-            lightCache.dispose(cx - 1, cz - 1);
-          }
-          if (!ok) {
-            break;
-          }
-        }
-
-        if (!ok) {
-          break;
-        }
-        string writeError;
-        if (!editor->write(mcaOut, &writeError)) {
-          fail(JE2BE_ERROR_WHAT(writeError));
-          break;
-        }
-
-        {
-          lock_guard<mutex> lock(mut);
-          queue->unlock({region});
-        }
-      }
-      if (latchPtr) {
-        latchPtr->count_down();
-      }
-    };
-
-    vector<thread> threads;
-    for (int i = 0; i < numThreads; i++) {
-      threads.emplace_back(action);
-    }
-    action();
-    if (latch) {
-      latch->wait();
-    }
-    for (auto &th : threads) {
-      th.join();
-    }
-    if (!status.ok()) {
-      return JE2BE_ERROR_PUSH(status);
-    }
-    if (done.load() != numChunks) {
-      return JE2BE_ERROR_WHAT("Terraform processed " + std::to_string(done.load()) + " of " + std::to_string(numChunks) + " chunks");
-    }
-    if (progress && !progress->reportTerraform({numChunks, numChunks}, numChunks)) {
-      return JE2BE_ERROR;
+    string writeError;
+    if (!editor->write(mcaOut, &writeError)) {
+      return JE2BE_ERROR_WHAT(writeError);
     }
     return Status::Ok();
   }
@@ -919,7 +820,7 @@ private:
       int cx,
       int cz,
       mcfile::je::McaEditor &editor,
-      fs::path inputDirectory,
+      fs::path const &inputDirectory,
       std::shared_ptr<terraform::java::BlockAccessorJavaDirectory<3, 3>> &blockAccessor,
       mcfile::Dimension dim,
       terraform::lighting::LightCache &lightCache) {
@@ -943,8 +844,7 @@ private:
     }
     blockAccessor->loadAllWith(editor, mcfile::Coordinate::RegionFromChunk(cx), mcfile::Coordinate::RegionFromChunk(cz));
 
-    auto copy = current->copy();
-    if (!EnsureJavaChunkSections(*current) || !EnsureJavaChunkSections(*copy)) {
+    if (!EnsureJavaChunkSections(*current)) {
       return JE2BE_ERROR_WHAT("Invalid sections tag in Java chunk [" + std::to_string(cx) + ", " + std::to_string(cz) + "]");
     }
     auto ch = mcfile::je::Chunk::MakeChunk(cx, cz, current);
@@ -953,7 +853,9 @@ private:
     }
     blockAccessor->set(ch);
 
-    auto writable = mcfile::je::WritableChunk::MakeChunk(cx, cz, copy);
+    // WritableChunk only reads the source NBT. Sharing it avoids a full deep
+    // copy while keeping independent parsed chunks for the neighbor cache.
+    auto writable = mcfile::je::WritableChunk::MakeChunk(cx, cz, current);
     if (!writable) {
       return JE2BE_ERROR_WHAT("Failed to create writable Java chunk [" + std::to_string(cx) + ", " + std::to_string(cz) + "]");
     }

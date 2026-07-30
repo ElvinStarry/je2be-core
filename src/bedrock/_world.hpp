@@ -23,7 +23,8 @@ public:
                         std::shared_ptr<Context> &resultContext,
                         std::function<bool(void)> progress,
                         std::atomic_uint64_t &numConvertedChunks,
-                        std::filesystem::path terrainTempDir);
+                        std::filesystem::path terrainTempDir,
+                        std::function<Status(Pos2i const &)> regionConverted);
 };
 
 } // namespace je2be::bedrock

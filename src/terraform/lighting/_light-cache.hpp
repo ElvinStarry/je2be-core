@@ -8,7 +8,7 @@ namespace je2be::terraform::lighting {
 class LightCache {
 public:
   LightCache(int rx, int rz)
-      : fRx(rx), fRz(rz), fModels({rx * 32 - 1, rz * 32 - 1}, 34, 34, nullptr), fSkyLights({rx * 32 - 1, rz * 32 - 1}, 34, 34, nullptr), fBlockLights({rx * 32 - 1, rz * 32 - 1}, 34, 34, nullptr) {}
+      : fModels({rx * 32 - 1, rz * 32 - 1}, 34, 34, nullptr), fSkyLights({rx * 32 - 1, rz * 32 - 1}, 34, 34, nullptr), fBlockLights({rx * 32 - 1, rz * 32 - 1}, 34, 34, nullptr) {}
 
   std::shared_ptr<ChunkLightingModel> getModel(int cx, int cz) {
     return fModels[{cx, cz}];
@@ -18,20 +18,23 @@ public:
     fModels[{cx, cz}] = data;
   }
 
-  // disposes fModels from [0, 0] to [cx, cz] (z first as `for(z = ...) { for (x = ...`)
+  // Disposes entries through [cx, cz] in z-major order. Repeated calls only
+  // visit entries beyond the previous disposal point.
   void dispose(int cx, int cz) {
-    if (cx < fRx * 32 - 1 || cz < fRz * 32 - 1) {
+    int const minX = fModels.fStart.fX;
+    int const minZ = fModels.fStart.fZ;
+    if (cx < minX || cz < minZ) {
       return;
     }
-    for (int z = fRz * 32 - 1; z <= cz; z++) {
-      for (int x = fRx * 32 - 1; x <= fRx * 32 + 32; x++) {
-        fModels[{x, z}].reset();
-        fSkyLights[{x, z}].reset();
-        fBlockLights[{x, z}].reset();
-        if (z == cz && x == cx) {
-          return;
-        }
-      }
+    cx = (std::min)(cx, fModels.fEnd.fX);
+    cz = (std::min)(cz, fModels.fEnd.fZ);
+    size_t const width = (size_t)(fModels.fEnd.fX - minX + 1);
+    size_t const target = (size_t)(cz - minZ) * width + (size_t)(cx - minX);
+    while (fDisposeIndex <= target && fDisposeIndex < fModels.fStorage.size()) {
+      fModels.fStorage[fDisposeIndex].reset();
+      fSkyLights.fStorage[fDisposeIndex].reset();
+      fBlockLights.fStorage[fDisposeIndex].reset();
+      fDisposeIndex++;
     }
   }
 
@@ -52,11 +55,10 @@ public:
   }
 
 private:
-  int const fRx;
-  int const fRz;
   Data2d<std::shared_ptr<ChunkLightingModel>> fModels;
   Data2d<std::shared_ptr<ChunkLightCache>> fSkyLights;
   Data2d<std::shared_ptr<ChunkLightCache>> fBlockLights;
+  size_t fDisposeIndex = 0;
 };
 
 } // namespace je2be::terraform::lighting

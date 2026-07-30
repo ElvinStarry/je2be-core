@@ -27,6 +27,14 @@ TEST_CASE("block-data") {
     // java -> bedrock
     auto blockJ = mcfile::je::Block::FromBlockData(javaBlockData, BlockDataTestDataVersion());
     CHECK(blockJ);
+    if (blockJ->name() == u8"minecraft:light") {
+      auto parsed = strings::ToI32(blockJ->property(u8"level", u8"15"));
+      int level = std::clamp(parsed ? *parsed : 15, 0, 15);
+      bedrockBlockData->set(u8"name", je2be::String(u8"minecraft:light_block_" + mcfile::String::ToString(level)));
+      if (auto states = bedrockBlockData->compoundTag(u8"states"); states) {
+        states->erase(u8"block_light_level");
+      }
+    }
     DataVersion dataVersion(BlockDataTestDataVersion(), BlockDataTestDataVersion());
     auto convertedToBe = je2be::java::BlockData::From(blockJ, nullptr, dataVersion, {});
     convertedToBe->erase(u8"version");

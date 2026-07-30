@@ -213,14 +213,17 @@ public:
     }
 
     totalChunks = 0;
-    for (auto const &i : accum.fRegions) {
+    for (auto &i : accum.fRegions) {
       mcfile::Dimension dimension = i.first;
-      for (auto const &j : i.second) {
+      auto &destination = regions[dimension];
+      destination.reserve(destination.size() + i.second.size());
+      for (auto &j : i.second) {
         Pos2i region = j.first;
-        regions[dimension].push_back(make_pair(region, j.second));
         totalChunks += j.second.fChunks.size();
+        destination.emplace_back(region, std::move(j.second));
       }
     }
+    accum.fRegions.clear();
     for (auto &i : regions) {
       sort(i.second.begin(), i.second.end(), [](pair<Pos2i, Context::ChunksInRegion> const &a, pair<Pos2i, Context::ChunksInRegion> const &b) {
         return a.second.fChunks.size() > b.second.fChunks.size();

@@ -47,6 +47,7 @@ static fs::path ProjectRootDir() {
 #include "bedrock-legacy-block.test.hpp"
 #include "bedrock-java-player.test.hpp"
 #include "parallel.test.hpp"
+#include "performance-structures.test.hpp"
 #include "java-uuid-replacer.test.hpp"
 #include "new-content-26.2.test.hpp"
 #include "world-data-override.test.hpp"

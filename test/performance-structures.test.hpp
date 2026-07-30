@@ -1,0 +1,249 @@
+#pragma once
+
+#include "_queue2d.hpp"
+#include "bedrock/_terraform-region-scheduler.hpp"
+#include "terraform/lighting/_light-cache.hpp"
+
+#include <defer.hpp>
+#include <sparse.hpp>
+
+TEST_CASE("performance data structures") {
+  SUBCASE("sparse Queue2d does not scan its coordinate bounds") {
+    using Queue = Queue2d<0, true, Sparse>;
+    Queue queue({-10000, -10000}, 20001, 20001);
+    queue.markTask({-10000, -10000}, 1);
+    queue.markTask({0, 0}, 3);
+    queue.markTask({10000, 10000}, 5);
+    queue.markTask({0, 0}, 7);
+
+    auto first = queue.next();
+    REQUIRE(first);
+    REQUIRE(holds_alternative<Queue::Dequeue>(*first));
+    CHECK(get<Queue::Dequeue>(*first).fRegion == Pos2i(0, 0));
+
+    auto second = queue.next();
+    REQUIRE(second);
+    REQUIRE(holds_alternative<Queue::Dequeue>(*second));
+    CHECK(get<Queue::Dequeue>(*second).fRegion == Pos2i(10000, 10000));
+
+    auto third = queue.next();
+    REQUIRE(third);
+    REQUIRE(holds_alternative<Queue::Dequeue>(*third));
+    CHECK(get<Queue::Dequeue>(*third).fRegion == Pos2i(-10000, -10000));
+    CHECK_FALSE(queue.next());
+  }
+
+  SUBCASE("optimized Queue2d preserves dynamic locking") {
+    using Queue = Queue2d<0, true, Sparse>;
+    Queue queue({0, 0}, 1, 1);
+    queue.markTask({0, 0}, 1);
+    auto first = queue.next();
+    REQUIRE(first);
+    REQUIRE(holds_alternative<Queue::Dequeue>(*first));
+
+    queue.markTask({0, 0}, 2);
+    auto busy = queue.next();
+    REQUIRE(busy);
+    CHECK(holds_alternative<Queue::Busy>(*busy));
+
+    queue.unlock({0, 0});
+    auto second = queue.next();
+    REQUIRE(second);
+    CHECK(holds_alternative<Queue::Dequeue>(*second));
+  }
+
+  SUBCASE("isolated Terraform regions release immediately") {
+    vector<Pos2i> regions = {{0, 0}, {10000, -10000}, {-10000, 10000}};
+    bedrock::TerraformRegionScheduler scheduler(regions);
+    CHECK(scheduler.size() == regions.size());
+    for (Pos2i const &region : regions) {
+      auto ready = scheduler.markConverted(region);
+      REQUIRE(ready);
+      REQUIRE(ready->size() == 1);
+      CHECK(ready->front() == region);
+
+      auto releasable = scheduler.markCompleted(region);
+      REQUIRE(releasable);
+      REQUIRE(releasable->size() == 1);
+      CHECK(releasable->front() == region);
+    }
+    CHECK(scheduler.allCompleted());
+  }
+
+  SUBCASE("row-major Terraform keeps temporary regions to a bounded frontier") {
+    int constexpr width = 64;
+    int constexpr height = 64;
+    vector<Pos2i> regions;
+    for (int z = 0; z < height; z++) {
+      for (int x = 0; x < width; x++) {
+        regions.emplace_back(x, z);
+      }
+    }
+    bedrock::TerraformRegionScheduler scheduler(regions);
+    size_t resident = 0;
+    size_t maximumResident = 0;
+    for (Pos2i const &converted : regions) {
+      resident++;
+      maximumResident = (std::max)(maximumResident, resident);
+      auto ready = scheduler.markConverted(converted);
+      REQUIRE(ready);
+      for (Pos2i const &target : *ready) {
+        auto releasable = scheduler.markCompleted(target);
+        REQUIRE(releasable);
+        REQUIRE(resident >= releasable->size());
+        resident -= releasable->size();
+      }
+    }
+    CHECK(scheduler.allCompleted());
+    CHECK(resident == 0);
+    CHECK(maximumResident < width * 4);
+  }
+
+  SUBCASE("dense Terraform regions wait for all existing neighbors") {
+    vector<Pos2i> regions;
+    for (int z = 0; z < 3; z++) {
+      for (int x = 0; x < 3; x++) {
+        regions.emplace_back(x, z);
+      }
+    }
+    bedrock::TerraformRegionScheduler scheduler(regions);
+    for (Pos2i const &region : regions) {
+      if (region == Pos2i(1, 1)) {
+        continue;
+      }
+      auto ready = scheduler.markConverted(region);
+      REQUIRE(ready);
+      CHECK(ready->empty());
+    }
+
+    auto ready = scheduler.markConverted({1, 1});
+    REQUIRE(ready);
+    CHECK(ready->size() == regions.size());
+    unordered_set<Pos2i, Pos2iHasher> scheduled(ready->begin(), ready->end());
+    CHECK(scheduled.size() == regions.size());
+
+    unordered_set<Pos2i, Pos2iHasher> released;
+    for (Pos2i const &region : *ready) {
+      auto releasable = scheduler.markCompleted(region);
+      REQUIRE(releasable);
+      for (Pos2i const &source : *releasable) {
+        CHECK(released.insert(source).second);
+      }
+    }
+    CHECK(released.size() == regions.size());
+    CHECK(scheduler.allCompleted());
+    CHECK_FALSE(scheduler.markConverted({1, 1}));
+    CHECK_FALSE(scheduler.markCompleted({1, 1}));
+  }
+
+  SUBCASE("Terraform scheduler is safe under concurrent completion") {
+    vector<Pos2i> regions;
+    for (int z = 0; z < 32; z++) {
+      for (int x = 0; x < 32; x++) {
+        regions.emplace_back(x, z);
+      }
+    }
+    bedrock::TerraformRegionScheduler scheduler(regions);
+    atomic_size_t next(0);
+    atomic_bool ok(true);
+    mutex resultMutex;
+    unordered_set<Pos2i, Pos2iHasher> scheduled;
+    unordered_set<Pos2i, Pos2iHasher> released;
+    vector<thread> workers;
+    for (int i = 0; i < 8; i++) {
+      workers.emplace_back([&]() {
+        while (true) {
+          size_t index = next.fetch_add(1);
+          if (index >= regions.size()) {
+            return;
+          }
+          auto ready = scheduler.markConverted(regions[index]);
+          if (!ready) {
+            ok = false;
+            return;
+          }
+          for (Pos2i const &target : *ready) {
+            auto releasable = scheduler.markCompleted(target);
+            if (!releasable) {
+              ok = false;
+              return;
+            }
+            lock_guard<mutex> lock(resultMutex);
+            ok = ok && scheduled.insert(target).second;
+            for (Pos2i const &source : *releasable) {
+              ok = ok && released.insert(source).second;
+            }
+          }
+        }
+      });
+    }
+    for (thread &worker : workers) {
+      worker.join();
+    }
+    CHECK(ok.load());
+    CHECK(scheduled.size() == regions.size());
+    CHECK(released.size() == regions.size());
+    CHECK(scheduler.allCompleted());
+  }
+
+  SUBCASE("LightCache dispose advances instead of rescanning") {
+    terraform::lighting::LightCache cache(0, 0);
+    auto a = make_shared<terraform::lighting::ChunkLightingModel>(-1, 0, -1);
+    auto b = make_shared<terraform::lighting::ChunkLightingModel>(0, 0, -1);
+    auto c = make_shared<terraform::lighting::ChunkLightingModel>(1, 0, -1);
+    auto d = make_shared<terraform::lighting::ChunkLightingModel>(-1, 0, 0);
+    auto e = make_shared<terraform::lighting::ChunkLightingModel>(0, 0, 0);
+    cache.setModel(-1, -1, a);
+    cache.setModel(0, -1, b);
+    cache.setModel(1, -1, c);
+    cache.setModel(-1, 0, d);
+    cache.setModel(0, 0, e);
+
+    cache.dispose(0, -1);
+    CHECK_FALSE(cache.getModel(-1, -1));
+    CHECK_FALSE(cache.getModel(0, -1));
+    CHECK(cache.getModel(1, -1) == c);
+    CHECK(cache.getModel(-1, 0) == d);
+
+    cache.dispose(-1, 0);
+    CHECK_FALSE(cache.getModel(1, -1));
+    CHECK_FALSE(cache.getModel(-1, 0));
+    CHECK(cache.getModel(0, 0) == e);
+
+    cache.dispose(32, -1);
+    CHECK(cache.getModel(0, 0) == e);
+    cache.dispose(0, 0);
+    CHECK_FALSE(cache.getModel(0, 0));
+  }
+
+  SUBCASE("Java cache uses the in-memory editor and preserves missing chunks") {
+    auto temp = mcfile::File::CreateTempDir(fs::temp_directory_path());
+    REQUIRE(temp);
+    defer {
+      Fs::DeleteAll(*temp);
+    };
+
+    auto file = *temp / mcfile::je::Region::GetDefaultRegionFileName(0, 0);
+    auto editor = mcfile::je::McaEditor::Open(file);
+    REQUIRE(editor);
+    auto chunk = mcfile::je::WritableChunk::MakeEmpty(1, 0, 1);
+    REQUIRE(chunk);
+    auto tag = chunk->toCompoundTag(mcfile::Dimension::Overworld);
+    REQUIRE(tag);
+    REQUIRE(editor->insert(1, 1, *tag));
+    REQUIRE(editor->write(file));
+    editor.reset();
+
+    editor = mcfile::je::McaEditor::Open(file);
+    REQUIRE(editor);
+    REQUIRE(editor->extract(1, 1));
+
+    terraform::java::BlockAccessorJavaDirectory<3, 3> cache(0, 0, *temp);
+    cache.loadAllWith(*editor, 0, 0);
+    CHECK_FALSE(cache.chunkAt(1, 1));
+
+    unique_ptr<terraform::java::BlockAccessorJavaDirectory<3, 3>> relocated(cache.makeRelocated(0, 0));
+    REQUIRE(relocated);
+    CHECK_FALSE(relocated->chunkAt(1, 1));
+  }
+}

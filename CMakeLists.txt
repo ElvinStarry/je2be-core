@@ -246,6 +246,7 @@ set(je2be_src_files
   src/bedrock/_region.hpp
   src/bedrock/_structure-info.hpp
   src/bedrock/_sub-chunk.hpp
+  src/bedrock/_terraform-region-scheduler.hpp
   src/bedrock/_world.hpp
   src/bedrock/terraform/_beacon.hpp
   src/bedrock/terraform/_campfire.hpp
@@ -450,6 +451,7 @@ set(test_files
   test/bedrock-legacy-block.test.hpp
   test/bedrock-java-player.test.hpp
   test/parallel.test.hpp
+  test/performance-structures.test.hpp
   test/java-uuid-replacer.test.hpp
   test/new-content-26.2.test.hpp
   test/world-data-override.test.hpp)

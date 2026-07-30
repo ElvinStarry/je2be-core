@@ -2,6 +2,7 @@
 
 #include <sparse.hpp>
 
+#include <queue>
 #include <variant>
 
 namespace je2be {
@@ -12,6 +13,20 @@ class Queue2d {
     float fWeight = 0;
     bool fDone = DefaultDone;
     bool fLock = false;
+  };
+
+  struct Candidate {
+    float fWeight;
+    size_t fIndex;
+  };
+
+  struct CandidateLess {
+    bool operator()(Candidate const &a, Candidate const &b) const {
+      if (a.fWeight != b.fWeight) {
+        return a.fWeight < b.fWeight;
+      }
+      return a.fIndex > b.fIndex;
+    }
   };
 
 public:
@@ -27,6 +42,39 @@ public:
 
   std::optional<std::variant<Dequeue, Busy>> next() {
     using namespace std;
+    if constexpr (LockRadius == 0 && DefaultDone) {
+      vector<Candidate> locked;
+      while (!fCandidates.empty()) {
+        Candidate candidate = fCandidates.top();
+        fCandidates.pop();
+        Element element = fElements[candidate.fIndex];
+        if (element.fDone || element.fWeight != candidate.fWeight) {
+          continue;
+        }
+        if (element.fLock) {
+          locked.push_back(candidate);
+          continue;
+        }
+        element.fDone = true;
+        element.fLock = true;
+        fElements[candidate.fIndex] = element;
+        for (Candidate const &other : locked) {
+          fCandidates.push(other);
+        }
+        Dequeue d;
+        d.fRegion = position(candidate.fIndex);
+        return d;
+      }
+      for (Candidate const &candidate : locked) {
+        fCandidates.push(candidate);
+      }
+      if (locked.empty()) {
+        return nullopt;
+      } else {
+        return Busy();
+      }
+    }
+
     optional<pair<Pos2i, float>> next;
     bool remaining = false;
     for (int z = 0; z < fHeight; z++) {
@@ -124,6 +172,9 @@ public:
       element.fWeight = weight;
       element.fDone = false;
       fElements[*idx] = element;
+      if constexpr (LockRadius == 0 && DefaultDone) {
+        fCandidates.push({weight, *idx});
+      }
     }
   }
 
@@ -138,11 +189,18 @@ private:
     }
   }
 
+  Pos2i position(size_t index) const {
+    int x = (int)(index % fWidth);
+    int z = (int)(index / fWidth);
+    return Pos2i(fOrigin.fX + x, fOrigin.fZ + z);
+  }
+
 private:
   Pos2i const fOrigin;
   int const fWidth;
   int const fHeight;
   Container<Element> fElements;
+  std::priority_queue<Candidate, std::vector<Candidate>, CandidateLess> fCandidates;
 };
 
 } // namespace je2be

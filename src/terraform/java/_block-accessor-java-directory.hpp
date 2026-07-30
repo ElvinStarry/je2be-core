@@ -26,18 +26,19 @@ public:
       for (int x = 0; x < Width; x++) {
         int cx = fChunkX + x;
         int cz = fChunkZ + z;
-        if (chunkAt(cx, cz)) {
+        auto idx = getIndex(cx, cz);
+        if (!idx || fCacheLoaded[*idx]) {
           continue;
         }
-        if (rx != mcfile::Coordinate::RegionFromChunk(cx) || rz != mcfile::Coordinate::RegionFromChunk(cz)) {
+        if (rx == mcfile::Coordinate::RegionFromChunk(cx) && rz == mcfile::Coordinate::RegionFromChunk(cz)) {
+          int lx = cx - rx * 32;
+          int lz = cz - rz * 32;
+          auto tag = editor.get(lx, lz);
+          auto chunk = tag ? mcfile::je::Chunk::MakeChunk(cx, cz, tag) : nullptr;
+          set(cx, cz, chunk);
           continue;
         }
-        int lx = cx - rx * 32;
-        int lz = cz - rz * 32;
-        if (auto tag = editor.get(lx, lz); tag) {
-          auto chunk = mcfile::je::Chunk::MakeChunk(cx, cz, tag);
-          set(chunk);
-        }
+        chunkAt(cx, cz);
       }
     }
   }
@@ -73,7 +74,11 @@ public:
     if (!chunk) {
       return;
     }
-    auto idx = getIndex(chunk->fChunkX, chunk->fChunkZ);
+    set(chunk->fChunkX, chunk->fChunkZ, chunk);
+  }
+
+  void set(int cx, int cz, std::shared_ptr<mcfile::je::Chunk> const &chunk) {
+    auto idx = getIndex(cx, cz);
     if (!idx) {
       return;
     }
@@ -88,7 +93,7 @@ public:
         auto idx = getIndex(fChunkX + x, fChunkZ + z);
         if (idx && fCacheLoaded[*idx]) {
           auto const &chunk = fCache[*idx];
-          ret->set(chunk);
+          ret->set(fChunkX + x, fChunkZ + z, chunk);
         }
       }
     }

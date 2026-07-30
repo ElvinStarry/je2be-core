@@ -17,7 +17,7 @@ class Region {
 
 public:
   static Status Convert(mcfile::Dimension d,
-                        Pos2iSet chunks,
+                        Pos2iSet const &chunks,
                         Pos2i region,
                         unsigned int concurrency,
                         mcfile::be::DbInterface *db,

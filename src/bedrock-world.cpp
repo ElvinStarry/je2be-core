@@ -26,7 +26,8 @@ public:
                         std::shared_ptr<Context> &resultContext,
                         std::function<bool(void)> progress,
                         std::atomic_uint64_t &numConvertedChunks,
-                        std::filesystem::path terrainTempDir) {
+                        std::filesystem::path terrainTempDir,
+                        std::function<Status(Pos2i const &)> regionConverted) {
     using namespace std;
     using namespace mcfile;
     namespace fs = std::filesystem;
@@ -86,20 +87,46 @@ public:
       }
     };
 
-    auto [ctx, status] = Parallel::Reduce<pair<Pos2i, Context::ChunksInRegion>, shared_ptr<Context>>(
-        regions,
+    vector<size_t> works;
+    works.reserve(regions.size());
+    for (size_t i = 0; i < regions.size(); i++) {
+      works.push_back(i);
+    }
+    auto spatialLess = [&regions](size_t a, size_t b) {
+      Pos2i const &pa = regions[a].first;
+      Pos2i const &pb = regions[b].first;
+      return pa.fZ == pb.fZ ? pa.fX < pb.fX : pa.fZ < pb.fZ;
+    };
+    sort(works.begin(), works.end(), spatialLess);
+
+    // Keep conversion local for prompt temp-file release, while starting dense
+    // regions early enough within each worker-sized window to avoid a long tail.
+    size_t const windowSize = (std::max)(size_t(1), (size_t)concurrency) * 4;
+    for (size_t begin = 0; begin < works.size(); begin += windowSize) {
+      size_t end = (std::min)(begin + windowSize, works.size());
+      sort(works.begin() + begin, works.begin() + end, [&regions, &spatialLess](size_t a, size_t b) {
+        size_t const chunksA = regions[a].second.fChunks.size();
+        size_t const chunksB = regions[b].second.fChunks.size();
+        return chunksA == chunksB ? spatialLess(a, b) : chunksA > chunksB;
+      });
+    }
+
+    auto [ctx, status] = Parallel::Reduce<size_t, shared_ptr<Context>>(
+        works,
         concurrency,
         [&parentContext]() { return parentContext.make(); },
-        [d, &db, dir, &parentContext, reportProgress, &numConvertedChunks, concurrency, terrainTempDir](pair<Pos2i, Context::ChunksInRegion> const &work) -> pair<shared_ptr<Context>, Status> {
-          auto ctx = parentContext.make();
+        [d, &db, dir, &regions, &parentContext, reportProgress, &numConvertedChunks, concurrency, terrainTempDir, &regionConverted](size_t index) -> pair<shared_ptr<Context>, Status> {
+          auto const &work = regions[index];
           Pos2i region = work.first;
           shared_ptr<Context> result;
-          if (auto st = Region::Convert(d, work.second.fChunks, region, concurrency, &db, dir, *ctx, reportProgress, numConvertedChunks, terrainTempDir, result); !st.ok()) {
-            return make_pair(ctx, JE2BE_ERROR_PUSH(st));
+          if (auto st = Region::Convert(d, work.second.fChunks, region, concurrency, &db, dir, parentContext, reportProgress, numConvertedChunks, terrainTempDir, result); !st.ok()) {
+            return make_pair(result ? result : parentContext.make(), JE2BE_ERROR_PUSH(st));
+          } else if (auto st = regionConverted(region); !st.ok()) {
+            return make_pair(result ? result : parentContext.make(), JE2BE_ERROR_PUSH(st));
           } else if (result) {
             return make_pair(result, Status::Ok());
           } else {
-            return make_pair(ctx, JE2BE_ERROR);
+            return make_pair(parentContext.make(), JE2BE_ERROR);
           }
         },
         [](shared_ptr<Context> const &from, shared_ptr<Context> to) -> void {
@@ -371,8 +398,9 @@ Status World::Convert(mcfile::Dimension d,
                       std::shared_ptr<Context> &resultContext,
                       std::function<bool(void)> progress,
                       std::atomic_uint64_t &numConvertedChunks,
-                      std::filesystem::path terrainTempDir) {
-  return Impl::Convert(d, regions, db, root, concurrency, parentContext, resultContext, progress, numConvertedChunks, terrainTempDir);
+                      std::filesystem::path terrainTempDir,
+                      std::function<Status(Pos2i const &)> regionConverted) {
+  return Impl::Convert(d, regions, db, root, concurrency, parentContext, resultContext, progress, numConvertedChunks, terrainTempDir, regionConverted);
 }
 
 } // namespace je2be::bedrock

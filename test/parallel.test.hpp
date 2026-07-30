@@ -1,4 +1,28 @@
 TEST_CASE("parallel") {
+  SUBCASE("zero concurrency still runs work") {
+    vector<int> work = {1, 2, 3, 4};
+    atomic_int count(0);
+    Status st = Parallel::Process<int>(work, 0, [&count](int const &) {
+      count.fetch_add(1);
+      return Status::Ok();
+    });
+    CHECK(st.ok());
+    CHECK(count.load() == work.size());
+  }
+
+  SUBCASE("zero concurrency still maps work") {
+    vector<int> work = {1, 2, 3, 4};
+    vector<int> output;
+    Status st = Parallel::Map<int, int>(
+        work, 0,
+        [](int const &value, int index) {
+          return make_pair(value + index, Status::Ok());
+        },
+        output);
+    CHECK(st.ok());
+    CHECK(output == vector<int>({1, 3, 5, 7}));
+  }
+
   SUBCASE("Reduce.1.ok") {
     size_t size = 2000;
     vector<int> work;
