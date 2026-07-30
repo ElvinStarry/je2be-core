@@ -130,7 +130,8 @@ TEST_CASE("end-gateway") {
     CHECK(exitPortalJ->fY == 89);
     CHECK(exitPortalJ->fZ == -3);
     CHECK(converted->fTileEntity->int64(u8"age") == 143764);
-    CHECK(converted->fTileEntity->boolean(u8"exact_teleport") == true);
+    CHECK(converted->fTileEntity->boolean(u8"ExactTeleport") == true);
+    CHECK_FALSE(converted->fTileEntity->tag(u8"exact_teleport"));
     CHECK_FALSE(converted->fTileEntity->tag(u8"ExitPortal"));
   }
 
@@ -176,9 +177,9 @@ TEST_CASE("end-gateway") {
       CHECK(exitPortal->fY == 60);
       CHECK(exitPortal->fZ == -613);
       CHECK(tile->int64(u8"age") == 725);
-      CHECK(tile->boolean(u8"exact_teleport") == true);
+      CHECK(tile->boolean(u8"ExactTeleport") == true);
       CHECK_FALSE(tile->tag(u8"ExitPortal"));
-      CHECK_FALSE(tile->tag(u8"ExactTeleport"));
+      CHECK_FALSE(tile->tag(u8"exact_teleport"));
     }
     {
       auto chunk = world.chunkAt(-51, -39);
@@ -196,9 +197,9 @@ TEST_CASE("end-gateway") {
       CHECK(exitPortal->fY == 59);
       CHECK(exitPortal->fZ == -52);
       CHECK(tile->int64(u8"age") == 409);
-      CHECK(tile->boolean(u8"exact_teleport") == true);
+      CHECK(tile->boolean(u8"ExactTeleport") == true);
       CHECK_FALSE(tile->tag(u8"ExitPortal"));
-      CHECK_FALSE(tile->tag(u8"ExactTeleport"));
+      CHECK_FALSE(tile->tag(u8"exact_teleport"));
     }
   }
 }
