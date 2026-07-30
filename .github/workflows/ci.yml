@@ -1,6 +1,7 @@
 name: New CI
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       branch:
@@ -29,15 +30,29 @@ permissions:
 
 jobs:
   windows:
-    if: ${{ inputs.windows }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.windows }}
     name: Windows
     runs-on: windows-latest
     steps:
       - name: Checkout selected branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.branch || github.ref }}
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Restore source timestamps
+        shell: bash
+        run: bash tool/git-restore-mtime.sh
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: new-ci-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            new-ci-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            new-ci-${{ runner.os }}-${{ runner.arch }}-release-
 
       - name: Configure
         run: >-
@@ -60,15 +75,29 @@ jobs:
             include/
 
   linux:
-    if: ${{ inputs.linux }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.linux }}
     name: Linux
     runs-on: ubuntu-latest
     steps:
       - name: Checkout selected branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.branch || github.ref }}
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Restore source timestamps
+        shell: bash
+        run: bash tool/git-restore-mtime.sh
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: new-ci-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            new-ci-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            new-ci-${{ runner.os }}-${{ runner.arch }}-release-
 
       - name: Configure
         run: >-
@@ -97,15 +126,29 @@ jobs:
             include/
 
   macos:
-    if: ${{ inputs.macos }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.macos }}
     name: macOS
     runs-on: macos-latest
     steps:
       - name: Checkout selected branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          ref: ${{ inputs.branch || github.ref }}
           submodules: recursive
+          fetch-depth: 0
+
+      - name: Restore source timestamps
+        shell: bash
+        run: bash tool/git-restore-mtime.sh
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: new-ci-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            new-ci-${{ runner.os }}-${{ runner.arch }}-release-${{ hashFiles('CMakeLists.txt', 'cmake/**') }}-
+            new-ci-${{ runner.os }}-${{ runner.arch }}-release-
 
       - name: Configure
         run: >-
