@@ -511,7 +511,8 @@ public:
         // and avoids Java's non-exact search selecting the elevated gateway frame.
         Pos3i exitPortalJ(exitPortalB->fX, exitPortalB->fY + 1, exitPortalB->fZ);
         t->set(u8"exit_portal", IntArrayFromPos3i(exitPortalJ));
-        t->set(u8"exact_teleport", Bool(true));
+        // Unlike the other fields, ExactTeleport keeps its legacy name in 26.2.
+        t->set(u8"ExactTeleport", Bool(true));
       } else {
         auto exitPortalJ = Compound();
         exitPortalJ->set(u8"X", Int(exitPortalB->fX));
