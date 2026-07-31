@@ -137,14 +137,16 @@ TEST_CASE("bedrock java player modern offhand") {
   REQUIRE(result);
   auto inventory = result->fEntity->listTag(u8"Inventory");
   REQUIRE(inventory);
-  REQUIRE(inventory->size() == 1);
+  CHECK(inventory->empty());
 
-  auto converted = inventory->at(0)->asCompound();
+  auto equipment = result->fEntity->compoundTag(u8"equipment");
+  REQUIRE(equipment);
+  auto converted = equipment->compoundTag(u8"offhand");
   REQUIRE(converted);
   CHECK(converted->string(u8"id") == u8"minecraft:shield");
   CHECK(converted->int32(u8"count") == 1);
   CHECK_FALSE(converted->byte(u8"Count"));
-  CHECK(converted->byte(u8"Slot") == -106);
+  CHECK_FALSE(converted->byte(u8"Slot"));
 }
 
 TEST_CASE("bedrock java player entity references") {
