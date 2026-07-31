@@ -202,6 +202,7 @@ TEST_CASE("bedrock java player entity references") {
 
     auto wolf = entity(u8"minecraft:wolf", 1002);
     wolf->set(u8"Pos", position(12.5f, 64.125f, -3.75f));
+    wolf->set(u8"Motion", position(0.125f, -0.25f, 0.5f));
     wolf->set(u8"TargetID", Long(playerId));
     auto wolfResult = je2be::bedrock::Entity::From(*wolf, *ctx, dataVersion);
     REQUIRE(wolfResult);
@@ -210,12 +211,18 @@ TEST_CASE("bedrock java player entity references") {
     CHECK(wolfPos->fX == static_cast<double>(12.5f));
     CHECK(wolfPos->fY == static_cast<double>(64.125f));
     CHECK(wolfPos->fZ == static_cast<double>(-3.75f));
+    auto wolfMotion = je2be::props::GetPos3d(*wolfResult->fEntity, u8"Motion");
+    REQUIRE(wolfMotion);
+    CHECK(wolfMotion->fX == static_cast<double>(0.125f));
+    CHECK(wolfMotion->fY == static_cast<double>(-0.25f));
+    CHECK(wolfMotion->fZ == static_cast<double>(0.5f));
     auto angryAt = wolfResult->fEntity->intArrayTag(u8"AngryAt");
     REQUIRE(angryAt);
     CHECK(angryAt->value() == playerUuid.toIntArrayTag()->value());
 
     auto minecart = entity(u8"minecraft:minecart", 1004);
     minecart->set(u8"Pos", position(12.5f, 64.5f, -3.75f));
+    minecart->set(u8"Motion", position(0.375f, 0.0f, -0.625f));
     minecart->set(u8"OnGround", Bool(false));
     auto minecartResult = je2be::bedrock::Entity::From(*minecart, *ctx, dataVersion);
     REQUIRE(minecartResult);
@@ -224,6 +231,11 @@ TEST_CASE("bedrock java player entity references") {
     CHECK(minecartPos->fX == static_cast<double>(12.5f));
     CHECK(minecartPos->fY == doctest::Approx(64.5 - 0.4375 + 0.0001));
     CHECK(minecartPos->fZ == static_cast<double>(-3.75f));
+    auto minecartMotion = je2be::props::GetPos3d(*minecartResult->fEntity, u8"Motion");
+    REQUIRE(minecartMotion);
+    CHECK(minecartMotion->fX == static_cast<double>(0.375f));
+    CHECK(minecartMotion->fY == static_cast<double>(0.0f));
+    CHECK(minecartMotion->fZ == static_cast<double>(-0.625f));
 
     auto nuisance = Compound();
     nuisance->set(u8"ActorId", Long(playerId));

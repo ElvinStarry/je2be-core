@@ -1184,6 +1184,12 @@ public:
     }
   }
 
+  static void Motion(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
+    if (auto motionB = props::GetPos3f(b, u8"Motion"); motionB) {
+      j[u8"Motion"] = motionB->toD().toListTag();
+    }
+  }
+
   static void MovementSpeed(CompoundTag const &b, CompoundTag &j, Context &ctx, int dataVersion) {
     auto movementB = FindAttribute(b, u8"minecraft:movement");
     if (!movementB) {
@@ -1460,6 +1466,7 @@ public:
     CompoundTag &j = *ret;
     Air(b, j, ctx, dataVersion);
     OnGround(b, j, ctx, dataVersion);
+    Motion(b, j, ctx, dataVersion);
     Pos(b, j, ctx, dataVersion);
     Rotation(b, j, ctx, dataVersion);
     PortalCooldown(b, j, ctx, dataVersion);
