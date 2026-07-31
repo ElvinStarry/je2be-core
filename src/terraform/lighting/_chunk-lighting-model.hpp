@@ -10,6 +10,11 @@ public:
   using ValueType = LightingModel;
   using Section = mcfile::PaletteList<LightingModel, u16, 4096, LightingModel::Hasher, LightingModel::EqualTo>;
 
+  struct Emitter {
+    Pos3i fPosition;
+    u8 fLevel;
+  };
+
   ChunkLightingModel(int cx, int cy, int cz) : fChunkX(cx), fChunkY(cy), fChunkZ(cz) {}
 
   LightingModel operator[](Pos3i const &p) const {
@@ -41,11 +46,22 @@ public:
     fSections[i] = s;
   }
 
+  void addEmitter(Pos3i const &position, u8 level) {
+    if (level > 0) {
+      fEmitters.push_back({position, level});
+    }
+  }
+
+  bool hasEmitters() const {
+    return !fEmitters.empty();
+  }
+
 public:
   int const fChunkX;
   int const fChunkY;
   int const fChunkZ;
   std::vector<std::shared_ptr<Section>> fSections;
+  std::vector<Emitter> fEmitters;
 };
 
 } // namespace je2be::terraform::lighting

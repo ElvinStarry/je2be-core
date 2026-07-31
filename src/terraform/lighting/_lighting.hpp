@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include <minecraft-file.hpp>
 
 #include "_data2d.hpp"
@@ -16,6 +18,41 @@
 namespace je2be::terraform::lighting {
 
 class Lighting {
+  struct DiffuseEntry {
+    Pos3i fPosition;
+    u8 fLevel;
+  };
+
+  struct Workspace {
+    void prepare(Pos3i const &origin, size_t height, bool skyLight) {
+      if (fHeight != height || !fModels || !fBlockLight || !fMemberships) {
+        fHeight = height;
+        fModels = std::make_unique<Data3dSq<LightingModel, 44>>(origin, height, LightingModel(CLEAR));
+        fBlockLight = std::make_unique<Data3dSq<u8, 44>>(origin, height, 0);
+        fMemberships = std::make_unique<Data3dSq<u16, 44>>(origin, height, 0);
+        fSkyLight.reset();
+      } else {
+        fModels->relocate(origin, LightingModel(CLEAR));
+        fBlockLight->relocate(origin, 0);
+      }
+      if (skyLight) {
+        if (!fSkyLight) {
+          fSkyLight = std::make_unique<Data3dSq<u8, 44>>(origin, height, 0);
+        } else {
+          fSkyLight->relocate(origin, 0);
+        }
+      }
+    }
+
+    size_t fHeight = 0;
+    std::unique_ptr<Data3dSq<LightingModel, 44>> fModels;
+    std::unique_ptr<Data3dSq<u8, 44>> fSkyLight;
+    std::unique_ptr<Data3dSq<u8, 44>> fBlockLight;
+    std::unique_ptr<Data3dSq<u16, 44>> fMemberships;
+    std::array<std::vector<DiffuseEntry>, 16> fBuckets;
+    std::vector<Volume> fLimits;
+  };
+
 public:
   static void Do(mcfile::Dimension dim, mcfile::je::Chunk &out, terraform::java::BlockAccessorJava &blockAccessor, LightCache &cache) {
     using namespace std;
@@ -32,10 +69,16 @@ public:
     Pos3i chunkOrigin(out.minBlockX() - 14, minBlockY, out.minBlockZ() - 14);
     size_t const height = maxBlockY - minBlockY + 1;
 
-    Data3dSq<LightingModel, 44> models(chunkOrigin, height, LightingModel(CLEAR));
+    int const dataVersion = out.getDataVersion();
+    bool const hasSkyLight = (dataVersion >= (int)JavaDataVersions::Snapshot25w33a && dim != Dimension::Nether) //
+                          || (dataVersion < (int)JavaDataVersions::Snapshot25w33a && dim == Dimension::Overworld);
+    thread_local Workspace workspace;
+    workspace.prepare(chunkOrigin, height, hasSkyLight);
+
+    Data3dSq<LightingModel, 44> &models = *workspace.fModels;
     EnsureLightingModels(cache, models, cx, minChunkY, cz, blockAccessor);
 
-    shared_ptr<Data3dSq<u8, 44>> skyLight;
+    Data3dSq<u8, 44> *skyLight = hasSkyLight ? workspace.fSkyLight.get() : nullptr;
     Data2d<optional<Volume>> skyVolumes({cx - 1, cz - 1}, 3, 3, nullopt);
     Data2d<bool> skyCached({cx - 1, cz - 1}, 3, 3, false);
     Data2d<optional<Volume>> skyDiffuseVolumes({cx - 1, cz - 1}, 3, 3, nullopt);
@@ -50,11 +93,7 @@ public:
         25w32a
         25w31a
      */
-    int dataVersion = out.getDataVersion();
-    if ((dataVersion >= (int)JavaDataVersions::Snapshot25w33a && dim != Dimension::Nether) //
-        || (dataVersion < (int)JavaDataVersions::Snapshot25w33a && dim == Dimension::Overworld)) {
-      skyLight = make_shared<Data3dSq<u8, 44>>(chunkOrigin, height, 0);
-
+    if (skyLight) {
       for (int dz = -1; dz <= 1; dz++) {
         for (int dx = -1; dx <= 1; dx++) {
           if (auto cached = cache.getSkyLight(cx + dx, cz + dz); cached) {
@@ -71,7 +110,7 @@ public:
       }
     }
 
-    Data3dSq<u8, 44> blockLight(chunkOrigin, height, 0);
+    Data3dSq<u8, 44> &blockLight = *workspace.fBlockLight;
 
     Data2d<optional<Volume>> blockVolumes({cx - 1, cz - 1}, 3, 3, nullopt);
     Data2d<bool> blockCached({cx - 1, cz - 1}, 3, 3, false);
@@ -95,15 +134,15 @@ public:
     if (skyLight) {
       InitializeSkyLight(models, *skyLight, skyCached, skyVolumes, skyDiffuseVolumes);
     }
-    InitializeBlockLight(models, blockLight, blockCached, blockVolumes, blockDiffuseVolumes);
+    InitializeBlockLight(cache, models, blockLight, blockCached, blockVolumes, blockDiffuseVolumes);
 
     if (skyLight) {
-      DiffuseLight(models, *skyLight, skyDiffuseVolumes);
+      DiffuseLight(models, *skyLight, skyDiffuseVolumes, *workspace.fMemberships, workspace.fBuckets, workspace.fLimits);
       auto skyLightCache = ChunkLightCache::Create(cx, cz, *skyLight);
       cache.setSkyLight(cx, cz, skyLightCache);
     }
 
-    DiffuseLight(models, blockLight, blockDiffuseVolumes);
+    DiffuseLight(models, blockLight, blockDiffuseVolumes, *workspace.fMemberships, workspace.fBuckets, workspace.fLimits);
     auto blockLightCache = ChunkLightCache::Create(cx, cz, blockLight);
     cache.setBlockLight(cx, cz, blockLightCache);
 
@@ -282,158 +321,118 @@ private:
   }
 
   template <Facing6 Face>
-  static bool CanLightPassthrough(u32 const &model, u32 const &targetModel) {
-    constexpr u32 mask = MaskFacing6(Face);
-    return (mask & ((~model) & ~Invert(targetModel))) != 0;
-  }
-
-  template <Facing6 Face>
   static bool IsFaceOpened(LightingModel const &model) {
     constexpr u32 mask = MaskFacing6(Face);
     return ((~model.fModel) & mask) != 0;
   }
 
-  enum IgnoreFace : int {
-    IgnoreNone = 0,
-    IgnoreUp,
-    IgnoreDown,
-    IgnoreNorth,
-    IgnoreEast,
-    IgnoreSouth,
-    IgnoreWest,
-  };
-
-  static void DiffuseLight(Data3dSq<LightingModel, 44> const &models, Data3dSq<u8, 44> &out, Data2d<std::optional<Volume>> const &volumes) {
-    Volume const all(out.fStart, out.fEnd);
-    while (true) {
-      int changed = 0;
-      for (int cz = volumes.fStart.fZ; cz <= volumes.fEnd.fZ; cz++) {
-        for (int cx = volumes.fStart.fX; cx <= volumes.fEnd.fX; cx++) {
-          auto v = volumes[{cx, cz}];
-          if (!v) {
-            continue;
-          }
-          Volume calc(v->fStart - Pos3i(1, 1, 1), v->fEnd + Pos3i(1, 1, 1));
-          auto limit = Volume::Intersection(calc, all);
-          if (!limit) {
-            continue;
-          }
-          for (int y = limit->fStart.fY; y <= limit->fEnd.fY; y++) {
-            for (int z = limit->fStart.fZ; z <= limit->fEnd.fZ; z++) {
-              for (int x = limit->fStart.fX; x <= limit->fEnd.fX; x++) {
-                Pos3i p(x, y, z);
-                u8 center = out[p];
-                if (center > 1) {
-                  DiffuseRecursive<IgnoreNone>(models, out, *limit, center, p, changed);
-                }
-              }
-            }
-          }
-        }
-      }
-      if (changed == 0) {
-        break;
-      }
-    }
+public:
+  static size_t DiffuseLight(Data3dSq<LightingModel, 44> const &models, Data3dSq<u8, 44> &out, Data2d<std::optional<Volume>> const &volumes) {
+    Data3dSq<u16, 44> memberships(out.fStart, out.height(), 0);
+    std::array<std::vector<DiffuseEntry>, 16> buckets;
+    std::vector<Volume> limits;
+    return DiffuseLight(models, out, volumes, memberships, buckets, limits);
   }
 
-  template <IgnoreFace Ignore>
-  static void DiffuseRecursive(Data3dSq<LightingModel, 44> const &models, Data3dSq<u8, 44> &out, Volume const &limit, u8 center, Pos3i const &pCenter, int &changed) {
-    int x = pCenter.fX;
-    int y = pCenter.fY;
-    int z = pCenter.fZ;
-    assert(center > 1);
-    u32 mCenter = models[pCenter].fModel;
-    if constexpr (Ignore != IgnoreUp) {
-      if (y + 1 <= limit.fEnd.fY) {
-        Pos3i pUp(x, y + 1, z);
-        u8 &up = out[pUp];
-        if (center > up + 1) {
-          if (CanLightPassthrough<Facing6::Up>(mCenter, models[pUp].fModel)) {
-            up = center - 1;
-            changed++;
-            if (up > 1) {
-              DiffuseRecursive<IgnoreDown>(models, out, limit, up, pUp, changed);
-            }
+private:
+  static size_t DiffuseLight(
+      Data3dSq<LightingModel, 44> const &models,
+      Data3dSq<u8, 44> &out,
+      Data2d<std::optional<Volume>> const &volumes,
+      Data3dSq<u16, 44> &memberships,
+      std::array<std::vector<DiffuseEntry>, 16> &buckets,
+      std::vector<Volume> &limits) {
+    memberships.relocate(out.fStart, 0);
+    for (auto &bucket : buckets) {
+      bucket.clear();
+    }
+    limits.clear();
+    limits.reserve((size_t)(volumes.fEnd.fX - volumes.fStart.fX + 1) * (size_t)(volumes.fEnd.fZ - volumes.fStart.fZ + 1));
+
+    Volume const all(out.fStart, out.fEnd);
+    for (int cz = volumes.fStart.fZ; cz <= volumes.fEnd.fZ; cz++) {
+      for (int cx = volumes.fStart.fX; cx <= volumes.fEnd.fX; cx++) {
+        auto v = volumes[{cx, cz}];
+        if (!v) {
+          continue;
+        }
+        if (auto limit = Volume::Intersection(Volume(v->fStart - Pos3i(1, 1, 1), v->fEnd + Pos3i(1, 1, 1)), all); limit) {
+          limits.push_back(*limit);
+        }
+      }
+    }
+    if (limits.empty()) {
+      return 0;
+    }
+    assert(limits.size() <= sizeof(u16) * 8);
+
+    for (size_t i = 0; i < limits.size(); i++) {
+      Volume const &limit = limits[i];
+      u16 const bit = (u16)(1u << i);
+      for (int y = limit.fStart.fY; y <= limit.fEnd.fY; y++) {
+        for (int z = limit.fStart.fZ; z <= limit.fEnd.fZ; z++) {
+          for (int x = limit.fStart.fX; x <= limit.fEnd.fX; x++) {
+            Pos3i position(x, y, z);
+            memberships[position] |= bit;
           }
         }
       }
     }
-    if constexpr (Ignore != IgnoreDown) {
-      if (y - 1 >= limit.fStart.fY) {
-        Pos3i pDown(x, y - 1, z);
-        u8 &down = out[pDown];
-        if (center > down + 1) {
-          if (CanLightPassthrough<Facing6::Down>(mCenter, models[pDown].fModel)) {
-            down = center - 1;
-            changed++;
-            if (down > 1) {
-              DiffuseRecursive<IgnoreUp>(models, out, limit, down, pDown, changed);
-            }
+
+    for (int y = out.fStart.fY; y <= out.fEnd.fY; y++) {
+      for (int z = out.fStart.fZ; z <= out.fEnd.fZ; z++) {
+        for (int x = out.fStart.fX; x <= out.fEnd.fX; x++) {
+          Pos3i const position(x, y, z);
+          u8 const level = out[position];
+          if (level > 1 && memberships[position] != 0) {
+            buckets[level].push_back({position, level});
           }
         }
       }
     }
-    if constexpr (Ignore != IgnoreEast) {
-      if (x + 1 <= limit.fEnd.fX) {
-        Pos3i pEast(x + 1, y, z);
-        u8 &east = out[pEast];
-        if (center > east + 1) {
-          if (CanLightPassthrough<Facing6::East>(mCenter, models[pEast].fModel)) {
-            east = center - 1;
-            changed++;
-            if (east > 1) {
-              DiffuseRecursive<IgnoreWest>(models, out, limit, east, pEast, changed);
-            }
-          }
+
+    size_t updates = 0;
+    auto propagate = [&models, &out, &memberships, &buckets, &updates](DiffuseEntry const &entry, Pos3i const &target, u32 mask) {
+      if (target.fX < out.fStart.fX || out.fEnd.fX < target.fX || target.fY < out.fStart.fY || out.fEnd.fY < target.fY || target.fZ < out.fStart.fZ || out.fEnd.fZ < target.fZ) {
+        return;
+      }
+      if ((memberships[entry.fPosition] & memberships[target]) == 0) {
+        return;
+      }
+      u8 const next = entry.fLevel - 1;
+      u8 &current = out[target];
+      if (next <= current) {
+        return;
+      }
+      if ((mask & ((~models[entry.fPosition].fModel) & ~Invert(models[target].fModel))) == 0) {
+        return;
+      }
+      current = next;
+      updates++;
+      if (next > 1) {
+        buckets[next].push_back({target, next});
+      }
+    };
+
+    for (int level = 15; level >= 2; level--) {
+      while (!buckets[level].empty()) {
+        DiffuseEntry entry = buckets[level].back();
+        buckets[level].pop_back();
+        if (out[entry.fPosition] != entry.fLevel) {
+          continue;
         }
+        int const x = entry.fPosition.fX;
+        int const y = entry.fPosition.fY;
+        int const z = entry.fPosition.fZ;
+        propagate(entry, {x, y + 1, z}, MASK_UP);
+        propagate(entry, {x, y - 1, z}, MASK_DOWN);
+        propagate(entry, {x + 1, y, z}, MASK_EAST);
+        propagate(entry, {x - 1, y, z}, MASK_WEST);
+        propagate(entry, {x, y, z + 1}, MASK_SOUTH);
+        propagate(entry, {x, y, z - 1}, MASK_NORTH);
       }
     }
-    if constexpr (Ignore != IgnoreWest) {
-      if (x - 1 >= limit.fStart.fX) {
-        Pos3i pWest(x - 1, y, z);
-        u8 &west = out[pWest];
-        if (center > west + 1) {
-          if (CanLightPassthrough<Facing6::West>(mCenter, models[pWest].fModel)) {
-            west = center - 1;
-            changed++;
-            if (west > 1) {
-              DiffuseRecursive<IgnoreEast>(models, out, limit, west, pWest, changed);
-            }
-          }
-        }
-      }
-    }
-    if constexpr (Ignore != IgnoreSouth) {
-      if (z + 1 <= limit.fEnd.fZ) {
-        Pos3i pSouth(x, y, z + 1);
-        u8 &south = out[pSouth];
-        if (center > south + 1) {
-          if (CanLightPassthrough<Facing6::South>(mCenter, models[pSouth].fModel)) {
-            south = center - 1;
-            changed++;
-            if (south > 1) {
-              DiffuseRecursive<IgnoreNorth>(models, out, limit, south, pSouth, changed);
-            }
-          }
-        }
-      }
-    }
-    if constexpr (Ignore != IgnoreNorth) {
-      if (z - 1 >= limit.fStart.fZ) {
-        Pos3i pNorth(x, y, z - 1);
-        u8 &north = out[pNorth];
-        if (center > north + 1) {
-          if (CanLightPassthrough<Facing6::North>(mCenter, models[pNorth].fModel)) {
-            north = center - 1;
-            changed++;
-            if (north > 1) {
-              DiffuseRecursive<IgnoreSouth>(models, out, limit, north, pNorth, changed);
-            }
-          }
-        }
-      }
-    }
+    return updates;
   }
 
   static void InitializeSkyLight(
@@ -518,7 +517,9 @@ private:
     }
   }
 
-  static void InitializeBlockLight(
+public:
+  static size_t InitializeBlockLight(
+      LightCache &lightCache,
       Data3dSq<LightingModel, 44> const &models,
       Data3dSq<u8, 44> &out,
       Data2d<bool> const &cached,
@@ -530,107 +531,90 @@ private:
     assert(models.fStart.fY <= out.fStart.fY && out.fEnd.fY <= models.fEnd.fY);
     assert(models.fStart.fZ <= out.fStart.fZ && out.fEnd.fZ <= models.fEnd.fZ);
 
+    Volume const modelVolume = models.volume();
+    Volume const outputVolume(out.fStart, out.fEnd);
+    size_t emitterVisits = 0;
     for (int cz = volumes.fStart.fZ; cz <= volumes.fEnd.fZ; cz++) {
       for (int cx = volumes.fStart.fX; cx <= volumes.fEnd.fX; cx++) {
-        auto v = volumes[{cx, cz}];
-        assert(v);
-        if (!v) [[unlikely]] {
+        auto chunkModel = lightCache.getModel(cx, cz);
+        if (!chunkModel) {
           continue;
         }
-        for (int by = v->fStart.fY; by <= v->fEnd.fY; by++) {
-          for (int bz = v->fStart.fZ - 1; bz <= v->fEnd.fZ + 1; bz++) {
-            for (int bx = v->fStart.fX - 1; bx <= v->fEnd.fX + 1; bx++) {
-              Pos3i pos{bx, by, bz};
-              if (!models.volume().contains(pos)) {
-                continue;
-              }
-              u8 emission = models[pos].fEmission;
-              if (emission == 0) {
-                continue;
-              }
-              if (emission > 1) {
-                Pos3i radius(emission - 1, emission - 1, emission - 1);
-                Volume calc(pos - radius, pos + radius);
-                for (int x = diffuseVolumes.fStart.fX; x <= diffuseVolumes.fEnd.fX; x++) {
-                  for (int z = diffuseVolumes.fStart.fZ; z <= diffuseVolumes.fEnd.fZ; z++) {
-                    if (cached[{x, z}]) {
-                      continue;
-                    }
-                    auto vv = volumes[{x, z}];
-                    assert(vv);
-                    if (!vv) [[unlikely]] {
-                      continue;
-                    }
-                    if (auto intersection = Volume::Intersection(calc, *vv); intersection) {
-                      if (auto current = diffuseVolumes[{x, z}]; current) {
-                        diffuseVolumes[{x, z}] = Volume::Union(*intersection, *current);
-                      } else {
-                        diffuseVolumes[{x, z}] = *intersection;
-                      }
-                    }
+        for (ChunkLightingModel::Emitter const &emitter : chunkModel->fEmitters) {
+          Pos3i const pos = emitter.fPosition;
+          u8 const emission = emitter.fLevel;
+          if (!modelVolume.contains(pos)) {
+            continue;
+          }
+          emitterVisits++;
+          if (emission > 1) {
+            Pos3i const radius(emission - 1, emission - 1, emission - 1);
+            Volume const calc(pos - radius, pos + radius);
+            for (int x = diffuseVolumes.fStart.fX; x <= diffuseVolumes.fEnd.fX; x++) {
+              for (int z = diffuseVolumes.fStart.fZ; z <= diffuseVolumes.fEnd.fZ; z++) {
+                if (cached[{x, z}]) {
+                  continue;
+                }
+                auto targetVolume = volumes[{x, z}];
+                if (!targetVolume) [[unlikely]] {
+                  continue;
+                }
+                if (auto intersection = Volume::Intersection(calc, *targetVolume); intersection) {
+                  if (auto current = diffuseVolumes[{x, z}]; current) {
+                    diffuseVolumes[{x, z}] = Volume::Union(*intersection, *current);
+                  } else {
+                    diffuseVolumes[{x, z}] = *intersection;
                   }
-                }
-              }
-              if (v->contains(pos) && out[pos] < emission) {
-                out[pos] = emission;
-              }
-
-              Pos3i target;
-
-              target = pos + Pos3iFromFacing6(Facing6::Up);
-              if (v->contains(target)) {
-                if (IsFaceOpened<Facing6::Down>(models[target])) {
-                  u8 &l = out[target];
-                  l = std::max(l, (u8)(emission - 1));
-                }
-              }
-
-              target = pos + Pos3iFromFacing6(Facing6::Down);
-              if (v->contains(target)) {
-                if (IsFaceOpened<Facing6::Up>(models[target])) {
-                  u8 &l = out[target];
-                  l = std::max(l, (u8)(emission - 1));
-                }
-              }
-
-              target = pos + Pos3iFromFacing6(Facing6::North);
-              if (v->contains(target)) {
-                if (IsFaceOpened<Facing6::South>(models[target])) {
-                  u8 &l = out[target];
-                  l = std::max(l, (u8)(emission - 1));
-                }
-              }
-
-              target = pos + Pos3iFromFacing6(Facing6::East);
-              if (v->contains(target)) {
-                if (IsFaceOpened<Facing6::West>(models[target])) {
-                  u8 &l = out[target];
-                  l = std::max(l, (u8)(emission - 1));
-                }
-              }
-
-              target = pos + Pos3iFromFacing6(Facing6::South);
-              if (v->contains(target)) {
-                if (IsFaceOpened<Facing6::North>(models[target])) {
-                  u8 &l = out[target];
-                  l = std::max(l, (u8)(emission - 1));
-                }
-              }
-
-              target = pos + Pos3iFromFacing6(Facing6::West);
-              if (v->contains(target)) {
-                if (IsFaceOpened<Facing6::East>(models[target])) {
-                  u8 &l = out[target];
-                  l = std::max(l, (u8)(emission - 1));
                 }
               }
             }
           }
+          if (outputVolume.contains(pos) && out[pos] < emission) {
+            out[pos] = emission;
+          }
+
+          auto initializeNeighbor = [&models, &out, &outputVolume, emission](Pos3i const &target, Facing6 openedFace) {
+            if (!outputVolume.contains(target) || emission <= 1) {
+              return;
+            }
+            bool opened = false;
+            switch (openedFace) {
+            case Facing6::Up:
+              opened = IsFaceOpened<Facing6::Up>(models[target]);
+              break;
+            case Facing6::Down:
+              opened = IsFaceOpened<Facing6::Down>(models[target]);
+              break;
+            case Facing6::North:
+              opened = IsFaceOpened<Facing6::North>(models[target]);
+              break;
+            case Facing6::East:
+              opened = IsFaceOpened<Facing6::East>(models[target]);
+              break;
+            case Facing6::South:
+              opened = IsFaceOpened<Facing6::South>(models[target]);
+              break;
+            case Facing6::West:
+              opened = IsFaceOpened<Facing6::West>(models[target]);
+              break;
+            }
+            if (opened) {
+              out[target] = std::max(out[target], (u8)(emission - 1));
+            }
+          };
+          initializeNeighbor(pos + Pos3iFromFacing6(Facing6::Up), Facing6::Down);
+          initializeNeighbor(pos + Pos3iFromFacing6(Facing6::Down), Facing6::Up);
+          initializeNeighbor(pos + Pos3iFromFacing6(Facing6::North), Facing6::South);
+          initializeNeighbor(pos + Pos3iFromFacing6(Facing6::East), Facing6::West);
+          initializeNeighbor(pos + Pos3iFromFacing6(Facing6::South), Facing6::North);
+          initializeNeighbor(pos + Pos3iFromFacing6(Facing6::West), Facing6::East);
         }
       }
     }
+    return emitterVisits;
   }
 
+private:
   static std::shared_ptr<ChunkLightingModel> CreateChunkLightingModel(mcfile::je::Chunk const &chunk, int minChunkY) {
     using namespace std;
 
@@ -653,6 +637,9 @@ private:
           for (int x = 0; x < 16; x++) {
             if (auto i = section->blockPaletteIndexAt(x, y, z); i) {
               index[(y * 16 + z) * 16 + x] = *i;
+              if (*i < palette.size() && palette[*i].fEmission > 0) {
+                ret->addEmitter({chunk.fChunkX * 16 + x, section->y() * 16 + y, chunk.fChunkZ * 16 + z}, palette[*i].fEmission);
+              }
             }
           }
         }

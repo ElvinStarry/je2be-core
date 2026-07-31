@@ -4,6 +4,7 @@
 #include "bedrock/_terraform-dispatcher.hpp"
 #include "bedrock/_terraform-region-scheduler.hpp"
 #include "terraform/lighting/_light-cache.hpp"
+#include "terraform/lighting/_lighting.hpp"
 
 #include <defer.hpp>
 #include <sparse.hpp>
@@ -260,6 +261,56 @@ TEST_CASE("performance data structures") {
     CHECK(cache.getModel(0, 0) == e);
     cache.dispose(0, 0);
     CHECK_FALSE(cache.getModel(0, 0));
+  }
+
+  SUBCASE("Data3dSq relocation preserves storage shape and resets values") {
+    Data3dSq<int, 4> data({0, 0, 0}, 2, 1);
+    data[{3, 1, 3}] = 9;
+
+    data.relocate({10, -2, 20}, 7);
+    CHECK(data.fStart == Pos3i(10, -2, 20));
+    CHECK(data.fEnd == Pos3i(13, -1, 23));
+    CHECK(data.height() == 2);
+    CHECK(data[{10, -2, 20}] == 7);
+    CHECK(data[{13, -1, 23}] == 7);
+  }
+
+  SUBCASE("bucket lighting diffusion visits only successful updates") {
+    using namespace terraform::lighting;
+    Data3dSq<LightingModel, 44> models({0, 0, 0}, 1, LightingModel(CLEAR));
+    Data3dSq<u8, 44> light({0, 0, 0}, 1, 0);
+    Data2d<optional<Volume>> volumes({0, 0}, 1, 1, nullopt);
+    volumes[{0, 0}] = Volume({8, 0, 8}, {22, 0, 22});
+    light[{15, 0, 15}] = 15;
+
+    size_t updates = Lighting::DiffuseLight(models, light, volumes);
+    CHECK(light[{15, 0, 15}] == 15);
+    CHECK(light[{16, 0, 15}] == 14);
+    CHECK(light[{22, 0, 15}] == 8);
+    CHECK(light[{23, 0, 15}] == 7);
+    CHECK(light[{24, 0, 15}] == 0);
+    CHECK(updates <= 44 * 44);
+  }
+
+  SUBCASE("block light initialization visits indexed emitters only") {
+    using namespace terraform::lighting;
+    LightCache cache(0, 0);
+    auto chunkModel = make_shared<ChunkLightingModel>(0, 0, 0);
+    chunkModel->addEmitter({8, 0, 8}, 15);
+    cache.setModel(0, 0, chunkModel);
+
+    Data3dSq<LightingModel, 44> models({0, 0, 0}, 1, LightingModel(CLEAR));
+    Data3dSq<u8, 44> light({0, 0, 0}, 1, 0);
+    Data2d<bool> cached({0, 0}, 1, 1, false);
+    Data2d<optional<Volume>> volumes({0, 0}, 1, 1, nullopt);
+    Data2d<optional<Volume>> diffuse({0, 0}, 1, 1, nullopt);
+    volumes[{0, 0}] = Volume({0, 0, 0}, {15, 0, 15});
+
+    size_t visits = Lighting::InitializeBlockLight(cache, models, light, cached, volumes, diffuse);
+    CHECK(visits == 1);
+    CHECK(light[{8, 0, 8}] == 15);
+    CHECK(light[{9, 0, 8}] == 14);
+    CHECK(diffuse[{0, 0}]);
   }
 
   SUBCASE("Java cache uses the in-memory editor and preserves missing chunks") {

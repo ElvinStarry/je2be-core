@@ -128,6 +128,16 @@ public:
     std::fill(fStorage, fStorage + Size * fHeight * Size, v);
   }
 
+  void relocate(Pos3i const &start, Value def) {
+    fStart = start;
+    fEnd = Pos3i(start.fX + (int)Size - 1, start.fY + (int)fHeight - 1, start.fZ + (int)Size - 1);
+    fill(def);
+  }
+
+  size_t height() const {
+    return fHeight;
+  }
+
   template <size_t SizeOther, size_t AlignOther>
   void copyFrom(Data3dSq<Value, SizeOther, AlignOther> const &other) {
     Volume vThis(fStart, fEnd);
@@ -160,8 +170,8 @@ private:
   }
 
 public:
-  Pos3i const fStart;
-  Pos3i const fEnd;
+  Pos3i fStart;
+  Pos3i fEnd;
 
 private:
   size_t const fHeight;
