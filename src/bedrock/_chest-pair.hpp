@@ -120,13 +120,7 @@ private:
       return nullptr;
     }
     auto pairTag = cache.blockEntityAt(candidate);
-    if (!pairTag) {
-      // Bedrock may store the pair coordinates on only one half. The block
-      // itself still proves the partner exists; the caller can synthesize the
-      // missing block entity when writing the Java chest.
-      return Compound();
-    }
-    if (pairTag->boolean(u8"forceunpair", false)) {
+    if (!pairTag || pairTag->boolean(u8"forceunpair", false)) {
       return nullptr;
     }
     if (auto reverse = DeclaredPair(candidate, *pairTag); reverse && *reverse != pos) {
@@ -179,13 +173,8 @@ private:
     Facing6 facing;
     if (auto cardinal = block.fStates->string(u8"minecraft:cardinal_direction"); cardinal) {
       facing = Facing6FromBedrockCardinalDirection(*cardinal);
-    } else if (auto direction = block.fStates->int32(u8"facing_direction"); direction) {
-      facing = Facing6FromBedrockFacingDirectionA(*direction);
-    } else if (block.fVal) {
-      // Legacy Bedrock chunks store chest facing directly in block metadata.
-      facing = Facing6FromBedrockFacingDirectionA(*block.fVal);
     } else {
-      return Pos2i(0, 0);
+      facing = Facing6FromBedrockFacingDirectionA(block.fStates->int32(u8"facing_direction", 0));
     }
     Pos3i const direction = Pos3iFromFacing6(facing);
     return Pos2i(direction.fX, direction.fZ);

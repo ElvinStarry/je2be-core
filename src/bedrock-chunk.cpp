@@ -170,14 +170,6 @@ public:
             } else {
               result->fTileEntity->erase(u8"Items");
             }
-          } else {
-            // A Bedrock double chest can keep its pair coordinates on only
-            // one half. Preserve that half's own contents instead of
-            // dropping them when the referenced block entity is absent.
-            auto items = BlockEntity::ContainerItems(*tagForConversion, u8"Items", ctx, dataVersion, false);
-            if (items) {
-              result->fTileEntity->set(u8"Items", items);
-            }
           }
         }
 
@@ -187,49 +179,6 @@ public:
         mcfile::je::SetBlockOptions o;
         o.fRemoveTileEntity = false;
         j->setBlockAt(pos, result->fBlock, o);
-      }
-    }
-
-    // A Bedrock double chest can have only one saved block entity. Revisit
-    // every chest block so the half without an entity still receives the
-    // matching Java block state, including when it is in another chunk.
-    for (int y = b.minBlockY(); y <= b.maxBlockY(); y++) {
-      for (int z = cz * 16; z < cz * 16 + 16; z++) {
-        for (int x = cx * 16; x < cx * 16 + 16; x++) {
-          Pos3i pos(x, y, z);
-          auto blockB = b.blockAt(pos);
-          if (!blockB || !ChestPair::IsChest(*blockB)) {
-            continue;
-          }
-          auto blockJ = j->blockAt(pos);
-          if (!blockJ) {
-            continue;
-          }
-
-          auto tagB = cache.blockEntityAt(pos);
-          auto emptyTag = Compound();
-          auto normalizedTag = ChestPair::Normalize(pos, *blockB, tagB ? *tagB : *emptyTag, cache);
-          auto type = ChestPair::JavaType(pos, *blockB, *normalizedTag);
-          if (type == u8"single") {
-            continue;
-          }
-
-          auto replace = blockJ->applying({{u8"type", type}});
-          mcfile::je::SetBlockOptions options;
-          options.fRemoveTileEntity = false;
-          j->setBlockAt(pos, replace, options);
-
-          if (tagB || j->fTileEntities.find(pos) != j->fTileEntities.end()) {
-            continue;
-          }
-
-          auto pairTag = normalizedTag->copy();
-          pairTag->erase(u8"Items");
-          auto result = BlockEntity::FromBlockAndBlockEntity(pos, *blockB, *pairTag, *blockJ, ctx, dataVersion, false);
-          if (result && result->fTileEntity) {
-            j->fTileEntities[pos] = result->fTileEntity;
-          }
-        }
       }
     }
 
