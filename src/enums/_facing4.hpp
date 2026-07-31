@@ -160,6 +160,8 @@ static inline Facing4 Facing4ByRotatingLeft(Facing4 f) {
   case Facing4::West:
     return Facing4::South;
   }
+  assert(false);
+  return f;
 }
 
 static inline Facing4 Facing4ByRotatingRight(Facing4 f) {
@@ -173,6 +175,8 @@ static inline Facing4 Facing4ByRotatingRight(Facing4 f) {
   case Facing4::West:
     return Facing4::North;
   }
+  assert(false);
+  return f;
 }
 
 } // namespace je2be

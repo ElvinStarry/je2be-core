@@ -23,7 +23,8 @@ if ("${CMAKE_PROJECT_NAME}" STREQUAL "${PROJECT_NAME}")
       /MP
       /Zc:__cplusplus # Enable updated __cplusplus macro
       /Zc:preprocessor # Enable preprocessor conformance mode
-      /ZI
+      $<$<CONFIG:Debug>:/ZI>
+      $<$<NOT:$<CONFIG:Debug>>:/Zi>
     )
     if (JE2BE_CORE_USE_INTEL_COMPILER)
       add_link_options(
@@ -490,6 +491,20 @@ CPMAddPackage(
           "LEVELDB_BUILD_BENCHMARKS OFF"
           "LEVELDB_INSTALL OFF"
           "LEVELDB_SNAPPY OFF")
+
+# FindZLIB cannot populate ZLIB_LIBRARIES from the in-tree CPM fallback used by
+# libminecraft-file. Keep LevelDB's zlib support and expose the actual target.
+if (TARGET leveldb AND TARGET zlibstatic)
+  target_link_libraries(leveldb zlibstatic)
+endif()
+
+if (MSVC AND TARGET mcfile-test)
+  target_compile_options(mcfile-test PRIVATE /wd4244)
+endif()
+
+if (MSVC AND TARGET leveldb)
+  target_compile_options(leveldb PRIVATE /wd4722)
+endif()
 
 CPMAddPackage(
   NAME cxxopts
