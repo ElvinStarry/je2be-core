@@ -126,6 +126,14 @@ public:
       }
       convertedPlayers.push_back({resolved.fBedrockId, resolved.fJavaId, player->fEntity});
     }
+    optional<Uuid> outputLocalPlayerUuid = resolvedLocalPlayerUuid;
+    if (!outputLocalPlayerUuid) {
+      if (auto data = levelDat->compoundTag(u8"Data"); data) {
+        if (auto player = data->compoundTag(u8"Player"); player) {
+          outputLocalPlayerUuid = props::GetUuid(*player, {.fIntArray = u8"UUID"});
+        }
+      }
+    }
 
     atomic<int> done = 0;
     atomic<bool> cancelRequested = false;
@@ -380,17 +388,16 @@ public:
 
         // Move time data to data/minecraft/world_clocks.dat
         {
-          auto time = data->int64(u8"Time", 0);
-          // auto dayTime = data->int64(u8"DayTime", 0);   // not exist
+          auto dayTime = data->int64(u8"DayTime", 0);
           auto clocks = Compound();
           auto overworld = Compound();
-          overworld->set(u8"total_ticks", Long(time));
+          overworld->set(u8"total_ticks", Long(dayTime));
           clocks->set(u8"minecraft:overworld", overworld);
           auto end = Compound();
-          end->set(u8"total_ticks", Long(time));
+          end->set(u8"total_ticks", Long(dayTime));
           clocks->set(u8"minecraft:the_end", end);
           auto nether = Compound();
-          nether->set(u8"total_ticks", Long(time));
+          nether->set(u8"total_ticks", Long(dayTime));
           clocks->set(u8"minecraft:the_nether", nether);
           data->erase(u8"DayTime");
           worldData.fWorldClocks = clocks;
@@ -453,8 +460,8 @@ public:
         }
 
         // Add singleplayer_uuid from local player
-        if (resolvedLocalPlayerUuid) {
-          data->set(u8"singleplayer_uuid", resolvedLocalPlayerUuid->toIntArrayTag());
+        if (outputLocalPlayerUuid) {
+          data->set(u8"singleplayer_uuid", outputLocalPlayerUuid->toIntArrayTag());
         }
       }
     }
@@ -521,8 +528,8 @@ public:
     for (auto const &player : convertedPlayers) {
       playerData[player.fJavaId.toString()] = player.fEntity;
     }
-    if (resolvedLocalPlayerUuid && localPlayer) {
-      playerData[resolvedLocalPlayerUuid->toString()] = localPlayer;
+    if (outputLocalPlayerUuid && localPlayer) {
+      playerData[outputLocalPlayerUuid->toString()] = localPlayer;
     }
 
     if (!playerData.empty()) {
