@@ -119,3 +119,22 @@ TEST_CASE("bedrock chest pairing recovers a missing block entity") {
   CHECK(je2be::bedrock::ChestPair::JavaType(left, *chest, *normalized) == u8"left");
   CHECK(je2be::bedrock::ChestPair::TakeItemsFrom(left, *chest, *normalized) == right);
 }
+
+TEST_CASE("bedrock legacy double chest pairing uses block metadata facing") {
+  auto chest = std::make_shared<mcfile::be::Block>(u8"minecraft:chest", Compound(), std::nullopt, int16_t(2));
+
+  Pos3i const left(0, 64, 0);
+  Pos3i const right(1, 64, 0);
+  ChestPairTestAccessor cache;
+  cache.fBlocks[left] = chest;
+  cache.fBlocks[right] = chest;
+  cache.fBlockEntities[left] = ChestTag(left, right, true);
+  cache.fBlockEntities[right] = ChestTag(right, left, false);
+
+  auto normalizedLeft = je2be::bedrock::ChestPair::Normalize(left, *chest, *cache.fBlockEntities[left], cache);
+  auto normalizedRight = je2be::bedrock::ChestPair::Normalize(right, *chest, *cache.fBlockEntities[right], cache);
+  REQUIRE(normalizedLeft);
+  REQUIRE(normalizedRight);
+  CHECK(je2be::bedrock::ChestPair::JavaType(left, *chest, *normalizedLeft) == u8"left");
+  CHECK(je2be::bedrock::ChestPair::JavaType(right, *chest, *normalizedRight) == u8"right");
+}
