@@ -24,8 +24,21 @@ public:
     return ret;
   }
 
+  static std::shared_ptr<ChunkLightCache> CreateEmpty(int cx, int cz) {
+    std::shared_ptr<ChunkLightCache> ret(new ChunkLightCache(cx, cz));
+    ret->fEmpty = true;
+    return ret;
+  }
+
+  bool empty() const {
+    return fEmpty;
+  }
+
   template <size_t Size>
   void copyTo(Data3dSq<u8, Size> &dest) const {
+    if (fEmpty) {
+      return;
+    }
     CopyAvailable(*fNorth, dest);
     CopyAvailable(*fEast, dest);
     CopyAvailable(*fSouth, dest);
@@ -106,6 +119,7 @@ private:
   std::shared_ptr<mcfile::Data4b3d> fEast;
   std::shared_ptr<mcfile::Data4b3d> fSouth;
   std::shared_ptr<mcfile::Data4b3d> fWest;
+  bool fEmpty = false;
 };
 
 } // namespace je2be::terraform::lighting

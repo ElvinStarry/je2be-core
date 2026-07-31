@@ -316,6 +316,18 @@ TEST_CASE("performance data structures") {
     CHECK(updates <= 44 * 44);
   }
 
+  SUBCASE("lighting diffusion skips work without diffuse volumes") {
+    using namespace terraform::lighting;
+    Data3dSq<LightingModel, 44> models({0, 0, 0}, 1, LightingModel(CLEAR));
+    Data3dSq<u8, 44> light({0, 0, 0}, 1, 0);
+    Data2d<optional<Volume>> volumes({0, 0}, 1, 1, nullopt);
+    light[{15, 0, 15}] = 15;
+
+    CHECK(Lighting::DiffuseLight(models, light, volumes) == 0);
+    CHECK(light[{15, 0, 15}] == 15);
+    CHECK(light[{16, 0, 15}] == 0);
+  }
+
   SUBCASE("block light initialization visits indexed emitters only") {
     using namespace terraform::lighting;
     LightCache cache(0, 0);
@@ -335,6 +347,47 @@ TEST_CASE("performance data structures") {
     CHECK(light[{8, 0, 8}] == 15);
     CHECK(light[{9, 0, 8}] == 14);
     CHECK(diffuse[{0, 0}]);
+  }
+
+  SUBCASE("uniform section lighting packs once and preserves unchanged vectors") {
+    using namespace terraform::lighting;
+    Data3dSq<u8, 44> light({0, 0, 0}, 16, 0);
+    array<u8, 2048> packed;
+    vector<u8> destination(2048, 0x22);
+
+    CHECK(Lighting::WriteSectionLight(light, {0, 0, 0}, destination, packed));
+    CHECK(destination.empty());
+
+    light.fill(15);
+    CHECK(Lighting::WriteSectionLight(light, {0, 0, 0}, destination, packed));
+    REQUIRE(destination.size() == 2048);
+    CHECK(destination.front() == 0xff);
+    u8 const *storage = destination.data();
+    CHECK_FALSE(Lighting::WriteSectionLight(light, {0, 0, 0}, destination, packed));
+    CHECK(destination.data() == storage);
+
+    light.fill(0);
+    light[{0, 0, 0}] = 1;
+    light[{1, 0, 0}] = 2;
+    CHECK(Lighting::WriteSectionLight(light, {0, 0, 0}, destination, packed));
+    CHECK(destination[0] == 0x21);
+    CHECK(destination[1] == 0);
+
+    light.fill(0);
+    CHECK(Lighting::WriteSectionLight(light, {0, 0, 0}, destination, packed, false));
+    REQUIRE(destination.size() == 2048);
+    CHECK(destination.front() == 0);
+    CHECK(destination.back() == 0);
+  }
+
+  SUBCASE("empty chunk light cache retains the processed marker") {
+    using namespace terraform::lighting;
+    auto empty = ChunkLightCache::CreateEmpty(0, 0);
+    REQUIRE(empty);
+    CHECK(empty->empty());
+    Data3dSq<u8, 44> light({-14, 0, -14}, 1, 0);
+    empty->copyTo(light);
+    CHECK(light[{0, 0, 0}] == 0);
   }
 
   SUBCASE("Java cache uses the in-memory editor and preserves missing chunks") {

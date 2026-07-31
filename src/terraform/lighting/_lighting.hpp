@@ -50,6 +50,7 @@ class Lighting {
     std::unique_ptr<Data3dSq<u8, 44>> fBlockLight;
     std::unique_ptr<Data3dSq<u16, 44>> fMemberships;
     std::array<std::vector<DiffuseEntry>, 16> fBuckets;
+    std::array<u8, 2048> fPackedLight;
     std::vector<Volume> fLimits;
   };
 
@@ -115,11 +116,15 @@ public:
     Data2d<optional<Volume>> blockVolumes({cx - 1, cz - 1}, 3, 3, nullopt);
     Data2d<bool> blockCached({cx - 1, cz - 1}, 3, 3, false);
     Data2d<optional<Volume>> blockDiffuseVolumes({cx - 1, cz - 1}, 3, 3, nullopt);
+    bool hasNonEmptyBlockCache = false;
 
     for (int dz = -1; dz <= 1; dz++) {
       for (int dx = -1; dx <= 1; dx++) {
         if (auto cached = cache.getBlockLight(cx + dx, cz + dz); cached) {
-          cached->copyTo(blockLight);
+          if (!cached->empty()) {
+            cached->copyTo(blockLight);
+            hasNonEmptyBlockCache = true;
+          }
           blockCached[{cx + dx, cz + dz}] = true;
         }
         Pos3i start((cx + dx) * 16, minBlockY, (cz + dz) * 16);
@@ -134,7 +139,8 @@ public:
     if (skyLight) {
       InitializeSkyLight(models, *skyLight, skyCached, skyVolumes, skyDiffuseVolumes);
     }
-    InitializeBlockLight(cache, models, blockLight, blockCached, blockVolumes, blockDiffuseVolumes);
+    size_t const emitterVisits = InitializeBlockLight(cache, models, blockLight, blockCached, blockVolumes, blockDiffuseVolumes);
+    bool const blockLightEmpty = emitterVisits == 0 && !hasNonEmptyBlockCache;
 
     if (skyLight) {
       DiffuseLight(models, *skyLight, skyDiffuseVolumes, *workspace.fMemberships, workspace.fBuckets, workspace.fLimits);
@@ -142,8 +148,10 @@ public:
       cache.setSkyLight(cx, cz, skyLightCache);
     }
 
-    DiffuseLight(models, blockLight, blockDiffuseVolumes, *workspace.fMemberships, workspace.fBuckets, workspace.fLimits);
-    auto blockLightCache = ChunkLightCache::Create(cx, cz, blockLight);
+    if (!blockLightEmpty) {
+      DiffuseLight(models, blockLight, blockDiffuseVolumes, *workspace.fMemberships, workspace.fBuckets, workspace.fLimits);
+    }
+    auto blockLightCache = blockLightEmpty ? ChunkLightCache::CreateEmpty(cx, cz) : ChunkLightCache::Create(cx, cz, blockLight);
     cache.setBlockLight(cx, cz, blockLightCache);
 
     for (auto &section : out.fSections) {
@@ -152,73 +160,65 @@ public:
       }
       Pos3i sectionOrigin(out.minBlockX(), section->y() * 16, out.minBlockZ());
 
-      {
-        section->fBlockLight.resize(2048);
-        auto sectionBlockLight = Data4b3dView::Make(sectionOrigin, 16, 16, 16, &section->fBlockLight);
-        assert(sectionBlockLight);
-        if (sectionBlockLight) {
-          bool darkness = true;
-          for (int y = 0; y < 16; y++) {
-            for (int z = 0; z < 16; z++) {
-              for (int x = 0; x < 16; x++) {
-                Pos3i v = sectionOrigin + Pos3i(x, y, z);
-                sectionBlockLight->setUnchecked(v, blockLight[v]);
-                if (blockLight[v] != 0) {
-                  darkness = false;
-                }
-              }
-            }
-          }
-          if (darkness) {
-            section->fBlockLight.clear();
-          }
-        }
+      if (blockLightEmpty) {
+        section->fBlockLight.clear();
+      } else {
+        WriteSectionLight(blockLight, sectionOrigin, section->fBlockLight, workspace.fPackedLight);
       }
 
       if (skyLight) {
-        section->fSkyLight.resize(2048);
-        auto sectionSkyLight = Data4b3dView::Make(sectionOrigin, 16, 16, 16, &section->fSkyLight);
-        assert(sectionSkyLight);
-        if (sectionSkyLight) {
-          bool darkness = true;
-          for (int y = 0; y < 16; y++) {
-            for (int z = 0; z < 16; z++) {
-              for (int x = 0; x < 16; x++) {
-                Pos3i v = sectionOrigin + Pos3i(x, y, z);
-                u8 l = (*skyLight)[v];
-                sectionSkyLight->setUnchecked(v, l);
-                if (l != 0) {
-                  darkness = false;
-                }
-              }
-            }
-          }
-          if (darkness) {
-            section->fSkyLight.clear();
-          }
-        }
+        WriteSectionLight(*skyLight, sectionOrigin, section->fSkyLight, workspace.fPackedLight);
       }
     }
 
     if (!out.fSections.empty() && out.fSections[0] && out.fSections[0]->y() == out.fChunkY && !out.fSections[0]->fSkyLight.empty() && skyLight && skyLight->fStart.fY <= 16 * (out.fChunkY - 1)) {
       auto bottom = make_shared<mcfile::je::ChunkSectionEmpty>(out.fChunkY - 1);
       bottom->fBlockLight.clear();
-      bottom->fSkyLight.resize(2048);
       Pos3i sectionOrigin(cx * 16, bottom->y() * 16, cz * 16);
-      auto sectionSkyLight = Data4b3dView::Make(sectionOrigin, 16, 16, 16, &bottom->fSkyLight);
-      if (sectionSkyLight) {
-        for (int y = 0; y < 16; y++) {
-          for (int z = 0; z < 16; z++) {
-            for (int x = 0; x < 16; x++) {
-              Pos3i v = sectionOrigin + Pos3i(x, y, z);
-              u8 l = (*skyLight)[v];
-              sectionSkyLight->setUnchecked(v, l);
-            }
-          }
+      WriteSectionLight(*skyLight, sectionOrigin, bottom->fSkyLight, workspace.fPackedLight, false);
+      out.fBottomSection = bottom;
+    }
+  }
+
+public:
+  static bool WriteSectionLight(
+      Data3dSq<u8, 44> const &source,
+      Pos3i const &origin,
+      std::vector<u8> &destination,
+      std::array<u8, 2048> &packed,
+      bool clearDark = true) {
+    u8 const first = source[origin];
+    bool uniform = true;
+    size_t index = 0;
+    for (int y = 0; y < 16; y++) {
+      for (int z = 0; z < 16; z++) {
+        for (int x = 0; x < 16; x += 2) {
+          u8 const low = source[origin + Pos3i(x, y, z)];
+          u8 const high = source[origin + Pos3i(x + 1, y, z)];
+          packed[index++] = (u8)((low & 0xf) | ((high & 0xf) << 4));
+          uniform = uniform && low == first && high == first;
         }
-        out.fBottomSection = bottom;
       }
     }
+
+    if (uniform && clearDark && first == 0) {
+      bool const changed = !destination.empty();
+      destination.clear();
+      return changed;
+    }
+    if (uniform) {
+      u8 const value = (u8)((first & 0xf) | ((first & 0xf) << 4));
+      if (destination.size() == packed.size() && std::all_of(destination.begin(), destination.end(), [value](u8 v) { return v == value; })) {
+        return false;
+      }
+      destination.assign(packed.size(), value);
+      return true;
+    }
+    if (destination.size() == packed.size() && std::equal(destination.begin(), destination.end(), packed.begin())) {
+      return false;
+    }
+    destination.assign(packed.begin(), packed.end());
+    return true;
   }
 
 private:
@@ -342,10 +342,6 @@ private:
       Data3dSq<u16, 44> &memberships,
       std::array<std::vector<DiffuseEntry>, 16> &buckets,
       std::vector<Volume> &limits) {
-    memberships.relocate(out.fStart, 0);
-    for (auto &bucket : buckets) {
-      bucket.clear();
-    }
     limits.clear();
     limits.reserve((size_t)(volumes.fEnd.fX - volumes.fStart.fX + 1) * (size_t)(volumes.fEnd.fZ - volumes.fStart.fZ + 1));
 
@@ -365,6 +361,11 @@ private:
       return 0;
     }
     assert(limits.size() <= sizeof(u16) * 8);
+
+    memberships.relocate(out.fStart, 0);
+    for (auto &bucket : buckets) {
+      bucket.clear();
+    }
 
     for (size_t i = 0; i < limits.size(); i++) {
       Volume const &limit = limits[i];
