@@ -263,6 +263,30 @@ TEST_CASE("performance data structures") {
     CHECK_FALSE(cache.getModel(0, 0));
   }
 
+  SUBCASE("LightCache relocation retains only adjacent region boundaries") {
+    terraform::lighting::LightCache cache(0, 0);
+    auto west = make_shared<terraform::lighting::ChunkLightingModel>(30, 0, 0);
+    auto boundary = make_shared<terraform::lighting::ChunkLightingModel>(31, 0, 0);
+    auto first = make_shared<terraform::lighting::ChunkLightingModel>(32, 0, 0);
+    weak_ptr<terraform::lighting::ChunkLightingModel> westReleased = west;
+    weak_ptr<terraform::lighting::ChunkLightingModel> boundaryReleased = boundary;
+    cache.setModel(30, 0, west);
+    cache.setModel(31, 0, boundary);
+    cache.setModel(32, 0, first);
+    west.reset();
+
+    cache.relocate(1, 0);
+    CHECK_FALSE(cache.getModel(30, 0));
+    CHECK(westReleased.expired());
+    CHECK(cache.getModel(31, 0) == boundary);
+    CHECK(cache.getModel(32, 0) == first);
+
+    boundary.reset();
+    cache.relocate(100, 100);
+    CHECK_FALSE(cache.getModel(31, 0));
+    CHECK(boundaryReleased.expired());
+  }
+
   SUBCASE("Data3dSq relocation preserves storage shape and resets values") {
     Data3dSq<int, 4> data({0, 0, 0}, 2, 1);
     data[{3, 1, 3}] = 9;

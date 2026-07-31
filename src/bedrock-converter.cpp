@@ -810,7 +810,20 @@ private:
       return a.fZ == b.fZ ? a.fX < b.fX : a.fZ < b.fZ;
     });
 
-    terraform::lighting::LightCache lightCache(rx, rz);
+    struct WorkerLightCache {
+      fs::path fInputDirectory;
+      mcfile::Dimension fDimension = mcfile::Dimension::Overworld;
+      std::unique_ptr<terraform::lighting::LightCache> fCache;
+    };
+    static thread_local WorkerLightCache workerCache;
+    if (!workerCache.fCache || workerCache.fInputDirectory != inputDirectory || workerCache.fDimension != dim) {
+      workerCache.fInputDirectory = inputDirectory;
+      workerCache.fDimension = dim;
+      workerCache.fCache = std::make_unique<terraform::lighting::LightCache>(rx, rz);
+    } else {
+      workerCache.fCache->relocate(rx, rz);
+    }
+    terraform::lighting::LightCache &lightCache = *workerCache.fCache;
     shared_ptr<terraform::java::BlockAccessorJavaDirectory<3, 3>> blockAccessor;
     for (Pos2i const &chunk : chunks) {
       if (auto st = TerraformChunk(chunk.fX, chunk.fZ, *editor, inputDirectory, blockAccessor, dim, lightCache); !st.ok()) {

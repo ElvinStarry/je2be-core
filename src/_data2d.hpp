@@ -44,8 +44,16 @@ public:
     }
   }
 
-  Pos2i const fStart;
-  Pos2i const fEnd;
+  void relocate(Pos2i const &start, T def) {
+    size_t const width = (size_t)(fEnd.fX - fStart.fX + 1);
+    size_t const height = (size_t)(fEnd.fZ - fStart.fZ + 1);
+    fStart = start;
+    fEnd = Pos2i(start.fX + (int)width - 1, start.fZ + (int)height - 1);
+    std::fill(fStorage.begin(), fStorage.end(), def);
+  }
+
+  Pos2i fStart;
+  Pos2i fEnd;
 
 public:
   std::vector<T> fStorage;
