@@ -120,7 +120,13 @@ private:
       return nullptr;
     }
     auto pairTag = cache.blockEntityAt(candidate);
-    if (!pairTag || pairTag->boolean(u8"forceunpair", false)) {
+    if (!pairTag) {
+      // Bedrock may store the pair coordinates on only one half. The block
+      // itself still proves the partner exists; the caller can synthesize the
+      // missing block entity when writing the Java chest.
+      return Compound();
+    }
+    if (pairTag->boolean(u8"forceunpair", false)) {
       return nullptr;
     }
     if (auto reverse = DeclaredPair(candidate, *pairTag); reverse && *reverse != pos) {

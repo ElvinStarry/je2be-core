@@ -97,3 +97,25 @@ TEST_CASE("bedrock forced unpaired chest remains single") {
     CHECK(je2be::bedrock::ChestPair::JavaType(pos, *chest, *normalized) == u8"single");
   }
 }
+
+TEST_CASE("bedrock chest pairing recovers a missing block entity") {
+  auto states = Compound();
+  states->set(u8"minecraft:cardinal_direction", u8"north");
+  auto chest = std::make_shared<mcfile::be::Block>(u8"minecraft:chest", states, java::kBlockDataVersion);
+
+  Pos3i const left(0, 64, 0);
+  Pos3i const right(1, 64, 0);
+  ChestPairTestAccessor cache;
+  cache.fBlocks[left] = chest;
+  cache.fBlocks[right] = chest;
+  cache.fBlockEntities[right] = ChestTag(right, left, false);
+
+  auto empty = Compound();
+  auto normalized = je2be::bedrock::ChestPair::Normalize(left, *chest, *empty, cache);
+  REQUIRE(normalized);
+  CHECK(normalized->int32(u8"pairx") == right.fX);
+  CHECK(normalized->int32(u8"pairz") == right.fZ);
+  CHECK(normalized->boolean(u8"pairlead") == true);
+  CHECK(je2be::bedrock::ChestPair::JavaType(left, *chest, *normalized) == u8"left");
+  CHECK(je2be::bedrock::ChestPair::TakeItemsFrom(left, *chest, *normalized) == right);
+}
