@@ -3030,6 +3030,13 @@ private:
       auto count = Item::Count(*buyA, 0);
       auto item = Item::From(buyA, ctx.fCtx, ctx.fDataVersion);
       if (item && count > 0) {
+        // Bedrock stores the adjusted first cost in buyA.Count and its base in buyCountA.
+        i32 demand = java.int32(u8"demand", 0);
+        float multiplier = java.float32(u8"priceMultiplier", 0);
+        i32 demandPrice = max(0, static_cast<i32>(floor(static_cast<float>(count * demand) * multiplier)));
+        i32 specialPrice = java.int32(u8"specialPrice", 0);
+        i32 currentPrice = clamp(count + demandPrice + specialPrice, 1, 64);
+        item->set(u8"Count", Byte(currentPrice));
         bedrock->set(u8"buyA", item);
         bedrock->set(u8"buyCountA", Int(count));
       } else {
