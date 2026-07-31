@@ -141,8 +141,9 @@ static void CheckMovingPiston(fs::path const &java, fs::path const &bedrock, i8 
     auto output = BedrockToJava(*bedrockReferenceDir);
     REQUIRE(output);
 
-    mcfile::je::World actualWorld(*output);
-    mcfile::je::World expectedWorld(*javaReferenceDir);
+    je2be::java::Options javaOptions;
+    mcfile::je::World actualWorld(javaOptions.getWorldDirectory(*output, mcfile::Dimension::Overworld));
+    mcfile::je::World expectedWorld(javaOptions.getWorldDirectory(*javaReferenceDir, mcfile::Dimension::Overworld));
 
     auto actual = actualWorld.chunkAt(0, 0);
     REQUIRE(actual);

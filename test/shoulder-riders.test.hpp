@@ -87,9 +87,20 @@ TEST_CASE("shoulder-riders") {
   auto level = je / "level.dat";
   auto stream = make_shared<mcfile::stream::GzFileInputStream>(level);
   auto dat = CompoundTag::Read(stream, Encoding::Java);
+  REQUIRE(dat);
   auto data = dat->compoundTag(u8"Data");
-  auto player = data->compoundTag(u8"Player");
-  CHECK(player);
+  REQUIRE(data);
+  CHECK_FALSE(data->compoundTag(u8"Player"));
+  auto singleplayerUuid = data->intArrayTag(u8"singleplayer_uuid");
+  REQUIRE(singleplayerUuid);
+  CHECK(singleplayerUuid->value() == playerUuid.toIntArrayTag()->value());
+
+  je2be::java::Options javaOptions;
+  auto playerDataDirectory = javaOptions.getPlayerDataDirectory(je);
+  auto localPlayerPath = playerDataDirectory / fs::path(playerUuid.toString() + u8".dat");
+  auto localStream = make_shared<mcfile::stream::GzFileInputStream>(localPlayerPath);
+  auto player = CompoundTag::Read(localStream, Encoding::Java);
+  REQUIRE(player);
 
   auto uuid = player->intArrayTag(u8"UUID");
   REQUIRE(uuid);
@@ -107,18 +118,7 @@ TEST_CASE("shoulder-riders") {
   CHECK(ownerRight->value() == playerUuid.toIntArrayTag()->value());
   CHECK(player->compoundTag(u8"RootVehicle"));
 
-  auto localPlayerPath = je / "playerdata" / fs::path(playerUuid.toString() + u8".dat");
-  auto localStream = make_shared<mcfile::stream::GzFileInputStream>(localPlayerPath);
-  auto localPlayer = CompoundTag::Read(localStream, Encoding::Java);
-  REQUIRE(localPlayer);
-  auto localUuid = localPlayer->intArrayTag(u8"UUID");
-  REQUIRE(localUuid);
-  CHECK(localUuid->value() == playerUuid.toIntArrayTag()->value());
-  CHECK(localPlayer->compoundTag(u8"ShoulderEntityLeft"));
-  CHECK(localPlayer->compoundTag(u8"ShoulderEntityRight"));
-  CHECK(localPlayer->compoundTag(u8"RootVehicle"));
-
-  auto remotePlayerPath = je / "playerdata" / fs::path(remotePlayerUuid.toString() + u8".dat");
+  auto remotePlayerPath = playerDataDirectory / fs::path(remotePlayerUuid.toString() + u8".dat");
   auto remoteStream = make_shared<mcfile::stream::GzFileInputStream>(remotePlayerPath);
   auto remotePlayer = CompoundTag::Read(remoteStream, Encoding::Java);
   REQUIRE(remotePlayer);
@@ -254,7 +254,9 @@ TEST_CASE("bedrock player list") {
   auto const randomUuidString = randomLine.substr(7, randomLine.size() - 13);
   std::u8string const randomUuid(randomUuidString.begin(), randomUuidString.end());
   REQUIRE(Uuid::FromString(randomUuid));
-  CHECK(fs::exists(je / "playerdata" / (randomUuidString + ".dat")));
+  je2be::java::Options javaOptions;
+  auto playerDataDirectory = javaOptions.getPlayerDataDirectory(je);
+  CHECK(fs::exists(playerDataDirectory / (randomUuidString + ".dat")));
   CHECK(realLine == "real,bb84e4a8-a756-42ee-8909-2ef9a527064c,true");
-  CHECK(fs::exists(je / "playerdata" / "bb84e4a8-a756-42ee-8909-2ef9a527064c.dat"));
+  CHECK(fs::exists(playerDataDirectory / "bb84e4a8-a756-42ee-8909-2ef9a527064c.dat"));
 }
