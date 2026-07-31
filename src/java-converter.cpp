@@ -27,6 +27,8 @@
 #include "java/_world-data.hpp"
 #include "java/_world.hpp"
 
+#include <array>
+
 namespace je2be::java {
 
 class Converter::Impl {
@@ -54,9 +56,9 @@ public:
       return JE2BE_ERROR_WHAT(ec.message());
     }
 
-    auto data = Level::Read(o.getLevelDatFilePath(input));
-    if (!data) {
-      return JE2BE_ERROR;
+    CompoundTagPtr data;
+    if (auto st = ReadInputLevelData(input, o, data); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
     }
     Level level = Level::ImportFromJava(*data);
 
@@ -227,6 +229,241 @@ public:
     }
   }
 
+private:
+  enum class GameRuleValue {
+    Boolean,
+    Integer,
+    NonZeroBoolean,
+  };
+
+  struct GameRuleMapping {
+    std::u8string_view fModern;
+    std::u8string_view fLegacy;
+    GameRuleValue fValue;
+    bool fInvert = false;
+  };
+
+  static Status ReadDataDocument(std::filesystem::path const &path, CompoundTagPtr &data) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_regular_file(path, ec)) {
+      if (ec) {
+        return JE2BE_ERROR_WHAT(ec.message());
+      }
+      data = nullptr;
+      return Status::Ok();
+    }
+    auto root = Level::Read(path);
+    if (!root) {
+      return JE2BE_ERROR_WHAT("Failed to read Java data file: " + path.string());
+    }
+    data = root->compoundTag(u8"data");
+    if (!data) {
+      return JE2BE_ERROR_WHAT("Missing data compound in Java data file: " + path.string());
+    }
+    return Status::Ok();
+  }
+
+  static CompoundTagPtr LegacyGameRules(CompoundTag const &modern) {
+    static constexpr std::array<GameRuleMapping, 39> mappings = {{
+        {u8"show_advancement_messages", u8"announceAdvancements", GameRuleValue::Boolean},
+        {u8"command_block_output", u8"commandBlockOutput", GameRuleValue::Boolean},
+        {u8"command_blocks_work", u8"commandBlocksEnabled", GameRuleValue::Boolean},
+        {u8"advance_time", u8"doDaylightCycle", GameRuleValue::Boolean},
+        {u8"entity_drops", u8"doEntityDrops", GameRuleValue::Boolean},
+        {u8"fire_spread_radius_around_player", u8"doFireTick", GameRuleValue::NonZeroBoolean},
+        {u8"immediate_respawn", u8"doImmediateRespawn", GameRuleValue::Boolean},
+        {u8"spawn_phantoms", u8"doInsomnia", GameRuleValue::Boolean},
+        {u8"limited_crafting", u8"doLimitedCrafting", GameRuleValue::Boolean},
+        {u8"mob_drops", u8"doMobLoot", GameRuleValue::Boolean},
+        {u8"spawn_mobs", u8"doMobSpawning", GameRuleValue::Boolean},
+        {u8"spawn_patrols", u8"doPatrolSpawning", GameRuleValue::Boolean},
+        {u8"block_drops", u8"doTileDrops", GameRuleValue::Boolean},
+        {u8"spawn_wandering_traders", u8"doTraderSpawning", GameRuleValue::Boolean},
+        {u8"spawn_wardens", u8"doWardenSpawning", GameRuleValue::Boolean},
+        {u8"advance_weather", u8"doWeatherCycle", GameRuleValue::Boolean},
+        {u8"drowning_damage", u8"drowningDamage", GameRuleValue::Boolean},
+        {u8"fall_damage", u8"fallDamage", GameRuleValue::Boolean},
+        {u8"fire_damage", u8"fireDamage", GameRuleValue::Boolean},
+        {u8"freeze_damage", u8"freezeDamage", GameRuleValue::Boolean},
+        {u8"keep_inventory", u8"keepInventory", GameRuleValue::Boolean},
+        {u8"locator_bar", u8"locatorBar", GameRuleValue::Boolean},
+        {u8"max_command_sequence_length", u8"maxCommandChainLength", GameRuleValue::Integer},
+        {u8"mob_griefing", u8"mobGriefing", GameRuleValue::Boolean},
+        {u8"natural_health_regeneration", u8"naturalRegeneration", GameRuleValue::Boolean},
+        {u8"pvp", u8"pvp", GameRuleValue::Boolean},
+        {u8"random_tick_speed", u8"randomTickSpeed", GameRuleValue::Integer},
+        {u8"reduced_debug_info", u8"reducedDebugInfo", GameRuleValue::Boolean},
+        {u8"send_command_feedback", u8"sendCommandFeedback", GameRuleValue::Boolean},
+        {u8"show_death_messages", u8"showDeathMessages", GameRuleValue::Boolean},
+        {u8"tnt_explodes", u8"tntExplodes", GameRuleValue::Boolean},
+        {u8"tnt_explosion_drop_decay", u8"tntExplosionDropDecay", GameRuleValue::Boolean},
+        {u8"players_sleeping_percentage", u8"playersSleepingPercentage", GameRuleValue::Integer},
+        {u8"projectiles_can_break_blocks", u8"projectilesCanBreakBlocks", GameRuleValue::Boolean},
+        {u8"respawn_radius", u8"spawnRadius", GameRuleValue::Integer},
+        {u8"spawner_blocks_work", u8"spawnerBlocksEnabled", GameRuleValue::Boolean},
+        {u8"ender_pearls_vanish_on_death", u8"enderPearlsVanishOnDeath", GameRuleValue::Boolean},
+        {u8"spawn_monsters", u8"spawnMonsters", GameRuleValue::Boolean},
+        {u8"raids", u8"disableRaids", GameRuleValue::Boolean, true},
+    }};
+
+    auto legacy = Compound();
+    for (auto const &mapping : mappings) {
+      auto found = modern.find(std::u8string(u8"minecraft:") + std::u8string(mapping.fModern));
+      if (found == modern.end()) {
+        continue;
+      }
+      auto value = found->second;
+      std::optional<i64> number;
+      if (auto byte = value->asByte(); byte) {
+        number = byte->fValue;
+      } else if (auto integer = value->asInt(); integer) {
+        number = integer->fValue;
+      } else if (auto longValue = value->asLong(); longValue) {
+        number = longValue->fValue;
+      }
+      if (!number) {
+        continue;
+      }
+
+      std::u8string converted;
+      switch (mapping.fValue) {
+      case GameRuleValue::Boolean: {
+        bool flag = *number != 0;
+        if (mapping.fInvert) {
+          flag = !flag;
+        }
+        converted = flag ? u8"true" : u8"false";
+        break;
+      }
+      case GameRuleValue::NonZeroBoolean:
+        converted = *number != 0 ? u8"true" : u8"false";
+        break;
+      case GameRuleValue::Integer:
+        converted = mcfile::String::ToString(*number);
+        break;
+      }
+      legacy->set(std::u8string(mapping.fLegacy), String(converted));
+    }
+    return legacy;
+  }
+
+  static CompoundTagPtr LegacyDragonFight(CompoundTag const &modern) {
+    auto legacy = Compound();
+    if (auto value = modern.byteTag(u8"dragon_killed"); value) {
+      legacy->set(u8"DragonKilled", Bool(value->fValue != 0));
+    }
+    if (auto value = modern.byteTag(u8"previously_killed"); value) {
+      legacy->set(u8"PreviouslyKilled", Bool(value->fValue != 0));
+    }
+    if (auto value = modern.byteTag(u8"needs_state_scanning"); value) {
+      legacy->set(u8"NeedsStateScanning", Bool(value->fValue != 0));
+    }
+    if (auto value = modern.intArrayTag(u8"dragon_uuid"); value) {
+      legacy->set(u8"Dragon", value);
+    }
+    if (auto value = modern.listTag(u8"gateways"); value) {
+      legacy->set(u8"Gateways", value);
+    }
+    if (auto value = modern.intArrayTag(u8"exit_portal_location"); value && value->fValue.size() == 3) {
+      auto pos = Compound();
+      pos->set(u8"X", Int(value->fValue[0]));
+      pos->set(u8"Y", Int(value->fValue[1]));
+      pos->set(u8"Z", Int(value->fValue[2]));
+      legacy->set(u8"ExitPortalLocation", pos);
+    }
+    return legacy;
+  }
+
+  static Status ReadInputLevelData(std::filesystem::path const &input, Options const &options, CompoundTagPtr &root) {
+    namespace fs = std::filesystem;
+    root = Level::Read(options.getLevelDatFilePath(input));
+    if (!root) {
+      return JE2BE_ERROR_WHAT("Failed to read Java level.dat");
+    }
+    auto level = root->compoundTag(u8"Data");
+    if (!level) {
+      return Status::Ok();
+    }
+
+    auto dataDir = options.getDataDirectory(input) / u8"minecraft";
+    CompoundTagPtr document;
+    if (auto st = ReadDataDocument(dataDir / u8"world_gen_settings.dat", document); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
+    }
+    if (document) {
+      level->set(u8"WorldGenSettings", document);
+    }
+
+    if (auto st = ReadDataDocument(dataDir / u8"game_rules.dat", document); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
+    }
+    if (document) {
+      level->set(u8"GameRules", LegacyGameRules(*document));
+    }
+
+    if (auto st = ReadDataDocument(dataDir / u8"weather.dat", document); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
+    }
+    if (document) {
+      level->set(u8"rainTime", Int(document->int32(u8"rain_time", 0)));
+      level->set(u8"raining", Bool(document->boolean(u8"raining", false)));
+      level->set(u8"thunderTime", Int(document->int32(u8"thunder_time", 0)));
+      level->set(u8"thundering", Bool(document->boolean(u8"thundering", false)));
+    }
+
+    if (auto st = ReadDataDocument(dataDir / u8"world_clocks.dat", document); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
+    }
+    if (document) {
+      if (auto overworld = document->compoundTag(u8"minecraft:overworld"); overworld) {
+        if (auto ticks = overworld->int64(u8"total_ticks"); ticks) {
+          level->set(u8"DayTime", Long(*ticks));
+        }
+      }
+    }
+
+    auto endData = options.getWorldDirectory(input, mcfile::Dimension::End) / u8"data" / u8"minecraft";
+    if (auto st = ReadDataDocument(endData / u8"ender_dragon_fight.dat", document); !st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
+    }
+    if (document) {
+      level->set(u8"DragonFight", LegacyDragonFight(*document));
+    }
+
+    if (auto difficulty = level->compoundTag(u8"difficulty_settings"); difficulty) {
+      static std::map<std::u8string, i8> const values = {
+          {u8"peaceful", 0},
+          {u8"easy", 1},
+          {u8"normal", 2},
+          {u8"hard", 3},
+      };
+      if (auto name = difficulty->string(u8"difficulty"); name) {
+        if (auto found = values.find(*name); found != values.end()) {
+          level->set(u8"Difficulty", Byte(found->second));
+        }
+      }
+      level->set(u8"hardcore", Bool(difficulty->boolean(u8"hardcore", false)));
+    }
+
+    if (!level->compoundTag(u8"Player")) {
+      if (auto id = level->intArrayTag(u8"singleplayer_uuid"); id) {
+        if (auto uuid = Uuid::FromIntArray(*id); uuid) {
+          auto playerPath = options.getPlayerDataDirectory(input) / fs::path(uuid->toString() + u8".dat");
+          std::error_code ec;
+          if (fs::is_regular_file(playerPath, ec) && !ec) {
+            if (auto player = Level::Read(playerPath); player) {
+              level->set(u8"Player", player);
+            } else {
+              return JE2BE_ERROR_WHAT("Failed to read Java player data: " + playerPath.string());
+            }
+          }
+        }
+      }
+    }
+    return Status::Ok();
+  }
+
   static std::optional<std::string> LocalPlayerData(CompoundTag const &tag, LevelData &ld) {
     using namespace std;
     using namespace mcfile::stream;
@@ -340,7 +577,6 @@ public:
     return CompoundTag::Write(*playerB->fEntity, mcfile::Encoding::LittleEndian);
   }
 
-private:
   static double GetTotalNumChunks(std::filesystem::path const &input, Options o) {
     namespace fs = std::filesystem;
     u32 num = 0;

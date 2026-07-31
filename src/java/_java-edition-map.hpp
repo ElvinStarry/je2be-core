@@ -39,7 +39,9 @@ public:
     namespace fs = std::filesystem;
     using namespace mcfile::stream;
 
-    auto jeFilePath = opt.getDataDirectory(input) / ("map_" + to_string(mapId) + ".dat");
+    auto dataDir = opt.getMapDataDirectory(input);
+    auto modern = dataDir.filename() == u8"maps";
+    auto jeFilePath = modern ? dataDir / (to_string(mapId) + ".dat") : dataDir / ("map_" + to_string(mapId) + ".dat");
     error_code ec;
     if (!fs::is_regular_file(jeFilePath, ec)) {
       return nullptr;
@@ -61,7 +63,8 @@ private:
     namespace fs = std::filesystem;
     std::unordered_map<i32, i8> table;
 
-    auto dataDir = opt.getDataDirectory(input);
+    auto dataDir = opt.getMapDataDirectory(input);
+    bool const modern = dataDir.filename() == u8"maps";
     if (!fs::exists(dataDir)) {
       return table;
     }
@@ -71,10 +74,13 @@ private:
         continue;
       }
       auto name = itr->path().filename().u8string();
-      if (!name.starts_with(u8"map_") || !name.ends_with(u8".dat")) {
+      if (!name.ends_with(u8".dat")) {
         continue;
       }
-      auto numberStr = strings::RemovePrefixAndSuffix(u8"map_", name, u8".dat");
+      if (!modern && !name.starts_with(u8"map_")) {
+        continue;
+      }
+      auto numberStr = modern ? strings::RemoveSuffix(name, u8".dat") : strings::RemovePrefixAndSuffix(u8"map_", name, u8".dat");
       auto number = strings::ToI32(numberStr);
       if (!number) {
         continue;

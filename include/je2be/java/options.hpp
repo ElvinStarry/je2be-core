@@ -20,6 +20,20 @@ public:
   std::filesystem::path getWorldDirectory(std::filesystem::path const &root, mcfile::Dimension dim) const {
     using namespace mcfile;
     namespace fs = std::filesystem;
+    auto levelRoot = getLevelDatFilePath(root).parent_path();
+    std::error_code ec;
+    auto modernBase = levelRoot / u8"dimensions" / u8"minecraft";
+    if (fs::is_directory(modernBase / u8"overworld", ec) && !ec) {
+      switch (dim) {
+      case Dimension::Nether:
+        return modernBase / u8"the_nether";
+      case Dimension::End:
+        return modernBase / u8"the_end";
+      case Dimension::Overworld:
+      default:
+        return modernBase / u8"overworld";
+      }
+    }
     switch (fLevelDirectoryStructure) {
     case LevelDirectoryStructure::Paper: {
       switch (dim) {
@@ -57,6 +71,28 @@ public:
     default:
       return root / "data";
     }
+  }
+
+  std::filesystem::path getMapDataDirectory(std::filesystem::path const &root) const {
+    namespace fs = std::filesystem;
+    auto data = getDataDirectory(root);
+    auto modern = data / u8"minecraft" / u8"maps";
+    std::error_code ec;
+    if (fs::is_directory(modern, ec) && !ec) {
+      return modern;
+    }
+    return data;
+  }
+
+  std::filesystem::path getPlayerDataDirectory(std::filesystem::path const &root) const {
+    namespace fs = std::filesystem;
+    auto levelRoot = getLevelDatFilePath(root).parent_path();
+    auto modern = levelRoot / u8"players" / u8"data";
+    std::error_code ec;
+    if (fs::is_directory(modern, ec) && !ec) {
+      return modern;
+    }
+    return levelRoot / u8"playerdata";
   }
 
   std::filesystem::path getLevelDatFilePath(std::filesystem::path const &root) const {
