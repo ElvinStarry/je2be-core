@@ -13,6 +13,13 @@ b2j -i /path/to/bedrock-world -o /path/to/java-world -O \
   experiments.minecraft:trade_rebalance=true
 ```
 
+To sample conversion and Terraform throughput while a conversion is running,
+pass an output CSV path:
+
+```sh
+b2j -i /path/to/bedrock-world -o /path/to/java-world --profile /tmp/b2j-profile.csv
+```
+
 ```sh
 j2b -i /path/to/java-world -o /path/to/bedrock-world --override \
   Difficulty=3 \
