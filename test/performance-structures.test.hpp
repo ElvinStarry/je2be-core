@@ -1,6 +1,7 @@
 #pragma once
 
 #include "_queue2d.hpp"
+#include "bedrock/_terraform-dispatcher.hpp"
 #include "bedrock/_terraform-region-scheduler.hpp"
 #include "terraform/lighting/_light-cache.hpp"
 
@@ -184,6 +185,51 @@ TEST_CASE("performance data structures") {
     CHECK(scheduled.size() == regions.size());
     CHECK(released.size() == regions.size());
     CHECK(scheduler.allCompleted());
+  }
+
+  SUBCASE("Terraform dispatcher runs asynchronously in descending weight order") {
+    thread::id const caller = this_thread::get_id();
+    unordered_map<Pos2i, size_t, Pos2iHasher> weights = {
+        {{1, 0}, 1},
+        {{2, 0}, 5},
+        {{3, 0}, 3},
+    };
+    vector<Pos2i> processed;
+    vector<Pos2i> completed;
+    bool asynchronous = true;
+
+    bedrock::TerraformDispatcher dispatcher(
+        1,
+        [&weights](Pos2i const &region) { return weights.at(region); },
+        [&processed, &asynchronous, caller](Pos2i const &region) {
+          asynchronous = asynchronous && this_thread::get_id() != caller;
+          processed.push_back(region);
+          return Status::Ok();
+        },
+        [&completed](Pos2i const &region) {
+          completed.push_back(region);
+          return Status::Ok();
+        });
+    REQUIRE(dispatcher.enqueue({{1, 0}, {2, 0}, {3, 0}}).ok());
+    REQUIRE(dispatcher.finish().ok());
+    CHECK(asynchronous);
+    CHECK(processed == vector<Pos2i>({{2, 0}, {3, 0}, {1, 0}}));
+    CHECK(completed == processed);
+  }
+
+  SUBCASE("Terraform dispatcher propagates worker errors") {
+    atomic_int completed(0);
+    bedrock::TerraformDispatcher dispatcher(
+        1,
+        [](Pos2i const &region) { return region.fX == 2 ? 10 : 1; },
+        [](Pos2i const &region) { return region.fX == 2 ? JE2BE_ERROR_WHAT("expected") : Status::Ok(); },
+        [&completed](Pos2i const &) {
+          completed++;
+          return Status::Ok();
+        });
+    REQUIRE(dispatcher.enqueue({{1, 0}, {2, 0}, {3, 0}}).ok());
+    CHECK_FALSE(dispatcher.finish().ok());
+    CHECK(completed.load() == 0);
   }
 
   SUBCASE("LightCache dispose advances instead of rescanning") {

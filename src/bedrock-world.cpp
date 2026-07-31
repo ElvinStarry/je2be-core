@@ -99,17 +99,14 @@ public:
     };
     sort(works.begin(), works.end(), spatialLess);
 
-    // Keep conversion local for prompt temp-file release, while starting dense
-    // regions early enough within each worker-sized window to avoid a long tail.
-    size_t const windowSize = (std::max)(size_t(1), (size_t)concurrency) * 4;
-    for (size_t begin = 0; begin < works.size(); begin += windowSize) {
-      size_t end = (std::min)(begin + windowSize, works.size());
-      sort(works.begin() + begin, works.begin() + end, [&regions, &spatialLess](size_t a, size_t b) {
-        size_t const chunksA = regions[a].second.fChunks.size();
-        size_t const chunksB = regions[b].second.fChunks.size();
-        return chunksA == chunksB ? spatialLess(a, b) : chunksA > chunksB;
-      });
-    }
+    // Keep the largest region jobs at the front of the work list. A fixed
+    // spatial window makes dense rows land in the same progress interval and
+    // creates a visible throughput cliff near the end of the conversion.
+    sort(works.begin(), works.end(), [&regions, &spatialLess](size_t a, size_t b) {
+      size_t const chunksA = regions[a].second.fChunks.size();
+      size_t const chunksB = regions[b].second.fChunks.size();
+      return chunksA == chunksB ? spatialLess(a, b) : chunksA > chunksB;
+    });
 
     auto [ctx, status] = Parallel::Reduce<size_t, shared_ptr<Context>>(
         works,

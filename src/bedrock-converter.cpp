@@ -15,6 +15,7 @@
 #include "bedrock/_java-chunk.hpp"
 #include "bedrock/_java-player.hpp"
 #include "bedrock/_level-data.hpp"
+#include "bedrock/_terraform-dispatcher.hpp"
 #include "bedrock/_terraform-region-scheduler.hpp"
 #include "bedrock/_world.hpp"
 #include "db/_readonly-db.hpp"
@@ -178,41 +179,55 @@ public:
       TerraformRegionScheduler scheduler(regionPositions);
       fs::path terrainOutputDir = TerrainOutputDirectory(output, d);
 
-      auto regionConverted = [&scheduler, &chunksByRegion, terrainTempDir, terrainOutputDir, d, &numTerraformedChunks, total, progress](Pos2i const &converted) -> Status {
-        auto ready = scheduler.markConverted(converted);
-        if (!ready) {
-          return JE2BE_ERROR_WHAT("Invalid Terraform conversion state for region [" + std::to_string(converted.fX) + ", " + std::to_string(converted.fZ) + "]");
+      auto regionWeight = [&chunksByRegion](Pos2i const &region) -> size_t {
+        auto found = chunksByRegion.find(region);
+        return found == chunksByRegion.end() || !found->second ? 0 : found->second->fChunks.size();
+      };
+      auto terraformRegion = [&chunksByRegion, terrainTempDir, terrainOutputDir, d, &numTerraformedChunks, total, progress](Pos2i const &region) -> Status {
+        auto chunks = chunksByRegion.find(region);
+        if (chunks == chunksByRegion.end() || !chunks->second) {
+          return JE2BE_ERROR_WHAT("Missing chunks for Terraform region [" + std::to_string(region.fX) + ", " + std::to_string(region.fZ) + "]");
         }
-        for (Pos2i const &region : *ready) {
-          auto chunks = chunksByRegion.find(region);
-          if (chunks == chunksByRegion.end() || !chunks->second) {
-            return JE2BE_ERROR_WHAT("Missing chunks for Terraform region [" + std::to_string(region.fX) + ", " + std::to_string(region.fZ) + "]");
-          }
-          if (auto st = TerraformRegion(region, *chunks->second, terrainOutputDir, terrainTempDir, d, numTerraformedChunks, total, progress); !st.ok()) {
-            return JE2BE_ERROR_PUSH(st);
-          }
-
-          auto releasable = scheduler.markCompleted(region);
-          if (!releasable) {
-            return JE2BE_ERROR_WHAT("Invalid Terraform completion state for region [" + std::to_string(region.fX) + ", " + std::to_string(region.fZ) + "]");
-          }
-          for (Pos2i const &source : *releasable) {
-            auto name = mcfile::je::Region::GetDefaultRegionFileName(source.fX, source.fZ);
-            auto file = terrainTempDir / name;
-            error_code ec;
-            bool removed = fs::remove(file, ec);
-            if (ec || !removed) {
-              string why = ec ? ec.message() : "file does not exist";
-              return JE2BE_ERROR_WHAT("Failed to release temporary region " + file.string() + ": " + why);
-            }
+        return TerraformRegion(region, *chunks->second, terrainOutputDir, terrainTempDir, d, numTerraformedChunks, total, progress);
+      };
+      auto completeTerraformRegion = [&scheduler, terrainTempDir](Pos2i const &region) -> Status {
+        auto releasable = scheduler.markCompleted(region);
+        if (!releasable) {
+          return JE2BE_ERROR_WHAT("Invalid Terraform completion state for region [" + std::to_string(region.fX) + ", " + std::to_string(region.fZ) + "]");
+        }
+        for (Pos2i const &source : *releasable) {
+          auto name = mcfile::je::Region::GetDefaultRegionFileName(source.fX, source.fZ);
+          auto file = terrainTempDir / name;
+          error_code ec;
+          bool removed = fs::remove(file, ec);
+          if (ec || !removed) {
+            string why = ec ? ec.message() : "file does not exist";
+            return JE2BE_ERROR_WHAT("Failed to release temporary region " + file.string() + ": " + why);
           }
         }
         return Status::Ok();
       };
 
+      unsigned const effectiveConcurrency = (std::max)(1u, concurrency);
+      unsigned const terraformConcurrency = (std::max)(1u, effectiveConcurrency / 2);
+      unsigned const conversionConcurrency = (std::max)(1u, effectiveConcurrency - terraformConcurrency);
+      TerraformDispatcher dispatcher(terraformConcurrency, regionWeight, terraformRegion, completeTerraformRegion);
+      auto regionConverted = [&scheduler, &dispatcher](Pos2i const &converted) -> Status {
+        auto ready = scheduler.markConverted(converted);
+        if (!ready) {
+          return JE2BE_ERROR_WHAT("Invalid Terraform conversion state for region [" + std::to_string(converted.fX) + ", " + std::to_string(converted.fZ) + "]");
+        }
+        return dispatcher.enqueue(*ready);
+      };
+
       shared_ptr<Context> result;
-      if (auto st = World::Convert(d, regionsInDimension, *db, output, concurrency, *bin, result, reportProgress, numConvertedChunks, terrainTempDir, regionConverted); !st.ok()) {
-        return JE2BE_ERROR_PUSH(st);
+      Status conversionStatus = World::Convert(d, regionsInDimension, *db, output, conversionConcurrency, *bin, result, reportProgress, numConvertedChunks, terrainTempDir, regionConverted);
+      Status terraformStatus = dispatcher.finish();
+      if (!conversionStatus.ok()) {
+        return JE2BE_ERROR_PUSH(conversionStatus);
+      }
+      if (!terraformStatus.ok()) {
+        return JE2BE_ERROR_PUSH(terraformStatus);
       }
       if (!scheduler.allCompleted()) {
         return JE2BE_ERROR_WHAT("Terraform did not complete all regions in dimension " + std::to_string(static_cast<int>(d)));

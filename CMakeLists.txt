@@ -247,6 +247,7 @@ set(je2be_src_files
   src/bedrock/_region.hpp
   src/bedrock/_structure-info.hpp
   src/bedrock/_sub-chunk.hpp
+  src/bedrock/_terraform-dispatcher.hpp
   src/bedrock/_terraform-region-scheduler.hpp
   src/bedrock/_world.hpp
   src/bedrock/terraform/_beacon.hpp
