@@ -7,6 +7,7 @@
 #include "_props.hpp"
 #include "bedrock/_block-accessor-wrapper.hpp"
 #include "bedrock/_block-entity.hpp"
+#include "bedrock/_chest-pair.hpp"
 #include "bedrock/_constants.hpp"
 #include "bedrock/_context.hpp"
 #include "bedrock/_entity.hpp"
@@ -149,7 +150,13 @@ public:
       if (!blockJ) {
         continue;
       }
-      auto result = BlockEntity::FromBlockAndBlockEntity(pos, *blockB, *tagB, *blockJ, ctx, dataVersion, false);
+      CompoundTagPtr normalizedTag;
+      CompoundTag const *tagForConversion = tagB.get();
+      if (ChestPair::IsChest(*blockB)) {
+        normalizedTag = ChestPair::Normalize(pos, *blockB, *tagB, cache);
+        tagForConversion = normalizedTag.get();
+      }
+      auto result = BlockEntity::FromBlockAndBlockEntity(pos, *blockB, *tagForConversion, *blockJ, ctx, dataVersion, false);
       if (!result) {
         continue;
       }

@@ -233,6 +233,7 @@ set(je2be_src_files
   src/bedrock/_block-data.hpp
   src/bedrock/_block-entity-convert-result.hpp
   src/bedrock/_block-entity.hpp
+  src/bedrock/_chest-pair.hpp
   src/bedrock/_chunk.hpp
   src/bedrock/_constants.hpp
   src/bedrock/_context.hpp

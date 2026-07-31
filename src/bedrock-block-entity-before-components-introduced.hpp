@@ -216,32 +216,9 @@ public:
 
   static std::optional<Result> Chest(Pos3i const &pos, mcfile::be::Block const &block, CompoundTag const &tagB, mcfile::je::Block const &blockJ, Context &ctx, int dataVersion) {
     using namespace std;
-    auto px = tagB.int32(u8"pairx");
-    auto pz = tagB.int32(u8"pairz");
-    bool pairlead = tagB.boolean(u8"pairlead", false);
-    u8string type = u8"single";
-
     Result r;
-
-    if (px && pz) {
-      Facing6 f6 = Facing6FromBedrockCardinalDirectionMigratingFacingDirectionA(block);
-      Pos3i vec = Pos3iFromFacing6(f6);
-      Pos2i d2(vec.fX, vec.fZ);
-      Pos2i pos2d(pos.fX, pos.fZ);
-      Pos2i pair(*px, *pz);
-
-      if (pair + Right90(d2) == pos2d) {
-        type = u8"right";
-      } else if (pair + Left90(d2) == pos2d) {
-        type = u8"left";
-      }
-      if ((type == u8"right" && !pairlead) || (type == u8"left" && pairlead)) {
-        // pairlead = true side of chest occupies upper half of the large chest in BE.
-        // On the other hand, in JE, type = right side of chest always occupies upper half of the large chest.
-        // Therefore, it is needed to swap "Items" between two chests in this situation.
-        r.fTakeItemsFrom = Pos3i(*px, pos.fY, *pz);
-      }
-    }
+    auto type = ChestPair::JavaType(pos, block, tagB);
+    r.fTakeItemsFrom = ChestPair::TakeItemsFrom(pos, block, tagB);
     r.fBlock = blockJ.applying({{u8"type", type}});
     auto te = EmptyFullName(block.fName, pos);
     if (auto st = LootTable::BedrockToJava(tagB, *te); st == LootTable::State::NoLootTable && !r.fTakeItemsFrom) {
@@ -923,16 +900,6 @@ public:
 
   static std::u8string ToString(bool b) {
     return b ? u8"true" : u8"false";
-  }
-
-  static Facing6 Facing6FromBedrockCardinalDirectionMigratingFacingDirectionA(mcfile::be::Block const &block) {
-    auto cardinalDirection = block.fStates->string(u8"minecraft:cardinal_direction");
-    if (cardinalDirection) {
-      return Facing6FromBedrockCardinalDirection(*cardinalDirection);
-    } else {
-      auto facingDirectionA = block.fStates->int32(u8"facing_direction", 0);
-      return Facing6FromBedrockFacingDirectionA(facingDirectionA);
-    }
   }
 
 #pragma endregion

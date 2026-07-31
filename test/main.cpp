@@ -39,6 +39,7 @@ static fs::path ProjectRootDir() {
 #include "volume.test.hpp"
 #include "loot-table.test.hpp"
 #include "bee-nest.test.hpp"
+#include "chest.test.hpp"
 #include "end-gateway.test.hpp"
 #include "strings.test.hpp"
 #include "pos2i-set.test.hpp"
