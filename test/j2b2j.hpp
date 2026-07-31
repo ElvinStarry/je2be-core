@@ -642,6 +642,24 @@ static void CheckRecipeJ(CompoundTag const &e, CompoundTag const &a) {
       CHECK(itemA);
       if (itemA) {
         CheckItemJ(*itemE, *itemA);
+        if (key == u8"buy") {
+          auto adjustedPrice = [](CompoundTag const &recipe, CompoundTag const &item) {
+            i32 basePrice = item.int32(u8"count", item.byte(u8"Count", 0));
+            i32 demand = recipe.int32(u8"demand", 0);
+            float multiplier = recipe.float32(u8"priceMultiplier", 0);
+            i32 demandPrice = std::max(0, static_cast<i32>(std::floor(static_cast<float>(basePrice * demand) * multiplier)));
+            return basePrice + demandPrice + recipe.int32(u8"specialPrice", 0);
+          };
+          i32 adjustedE = adjustedPrice(e, *itemE);
+          i32 adjustedA = adjustedPrice(a, *itemA);
+          i32 effectiveE = std::clamp(adjustedE, 1, 64);
+          i32 effectiveA = std::clamp(adjustedA, 1, 64);
+          CHECK(effectiveE == effectiveA);
+          if (adjustedE != effectiveE || adjustedA != effectiveA) {
+            copyE->erase(u8"specialPrice");
+            copyA->erase(u8"specialPrice");
+          }
+        }
       }
     } else {
       CHECK(!itemA);
@@ -795,6 +813,11 @@ static void CheckEntityJ(std::u8string const &id, CompoundTag const &entityE, Co
     blacklist.insert(u8"LastGossipDecay");
     blacklist.insert(u8"LastRestock");
     blacklist.insert(u8"RestocksToday");
+    auto offers = entityE.compoundTag(u8"Offers");
+    auto recipes = offers ? offers->listTag(u8"Recipes") : nullptr;
+    if (entityE.int32(u8"Xp", 0) == 0 && entityA.int32(u8"Xp", 0) == 1 && recipes && !recipes->empty()) {
+      blacklist.insert(u8"Xp");
+    }
   } else if (id == u8"minecraft:shulker") {
     blacklist.insert(u8"AttachFace"); // not exists in BE
     blacklist.insert(u8"Peek");       // not exists in BE
@@ -1224,7 +1247,7 @@ static void CheckChunkJ(mcfile::je::Region const &regionE, mcfile::je::Region co
   CHECK(chunkA->minBlockY() == chunkE->minBlockY());
   CHECK(chunkA->maxBlockY() == chunkE->maxBlockY());
 
-  CHECK(chunkE->getDataVersion() == chunkA->getDataVersion());
+  CHECK(chunkA->getDataVersion() == kJavaDataVersion);
 
   for (int y = chunkE->minBlockY(); y <= chunkE->maxBlockY(); y++) {
     for (int z = chunkE->minBlockZ() + 1; z < chunkE->maxBlockZ(); z++) {
@@ -1341,6 +1364,29 @@ static std::shared_ptr<CompoundTag> ReadLevelDatJ(fs::path const &p) {
   return CompoundTag::Read(s, Encoding::Java);
 }
 
+static CompoundTagPtr ReadDataDocumentJ(fs::path const &p) {
+  auto root = ReadLevelDatJ(p);
+  CHECK(root);
+  if (!root) {
+    return nullptr;
+  }
+  CHECK(root->int32(u8"DataVersion", -1) == kJavaDataVersion);
+  return root->compoundTag(u8"data");
+}
+
+static CompoundTagPtr ReadExternalPlayerJ(fs::path const &levelDat, CompoundTag const &data) {
+  auto id = data.intArrayTag(u8"singleplayer_uuid");
+  if (!id) {
+    return nullptr;
+  }
+  auto uuid = Uuid::FromIntArray(*id);
+  if (!uuid) {
+    return nullptr;
+  }
+  auto path = levelDat.parent_path() / u8"players" / u8"data" / fs::path(uuid->toString() + u8".dat");
+  return ReadLevelDatJ(path);
+}
+
 static void CheckLevelDatJ(fs::path const &pathE, fs::path const &pathA) {
   auto e = ReadLevelDatJ(pathE);
   auto a = ReadLevelDatJ(pathA);
@@ -1351,6 +1397,63 @@ static void CheckLevelDatJ(fs::path const &pathE, fs::path const &pathA) {
   auto dataA = a->compoundTag(u8"Data");
   CHECK(dataE);
   CHECK(dataA);
+
+  CHECK(dataA->int32(u8"DataVersion", -1) == kJavaDataVersion);
+  auto versionA = dataA->compoundTag(u8"Version");
+  REQUIRE(versionA);
+  CHECK(versionA->int32(u8"Id", -1) == kJavaDataVersion);
+  CHECK(versionA->string(u8"Name", u8"") == bedrock::kVersionString);
+
+  if (!dataA->compoundTag(u8"Player")) {
+    auto player = ReadExternalPlayerJ(pathA, *dataA);
+    CHECK(player);
+    if (player) {
+      dataA->set(u8"Player", player);
+    }
+  }
+  auto outputPlayer = dataA->compoundTag(u8"Player");
+  REQUIRE(outputPlayer);
+  CHECK(outputPlayer->int32(u8"DataVersion", -1) == kJavaDataVersion);
+
+  if (auto difficulty = dataA->compoundTag(u8"difficulty_settings"); difficulty) {
+    static map<u8string, i8> const values = {
+        {u8"peaceful", 0},
+        {u8"easy", 1},
+        {u8"normal", 2},
+        {u8"hard", 3},
+    };
+    auto name = difficulty->string(u8"difficulty");
+    REQUIRE(name);
+    auto found = values.find(*name);
+    REQUIRE(found != values.end());
+    CHECK(dataE->byte(u8"Difficulty", 2) == found->second);
+    CHECK(dataE->boolean(u8"hardcore", false) == difficulty->boolean(u8"hardcore", false));
+  }
+
+  auto modernDataDir = pathA.parent_path() / u8"data" / u8"minecraft";
+  if (dataA->intArrayTag(u8"singleplayer_uuid")) {
+    auto worldGenSettings = ReadDataDocumentJ(modernDataDir / u8"world_gen_settings.dat");
+    auto gameRules = ReadDataDocumentJ(modernDataDir / u8"game_rules.dat");
+    auto weather = ReadDataDocumentJ(modernDataDir / u8"weather.dat");
+    auto clocks = ReadDataDocumentJ(modernDataDir / u8"world_clocks.dat");
+    REQUIRE(worldGenSettings);
+    REQUIRE(gameRules);
+    REQUIRE(weather);
+    REQUIRE(clocks);
+
+    CHECK(weather->int32(u8"rain_time", 0) == dataE->int32(u8"rainTime", 0));
+    CHECK(weather->boolean(u8"raining", false) == dataE->boolean(u8"raining", false));
+    CHECK(weather->int32(u8"thunder_time", 0) == dataE->int32(u8"thunderTime", 0));
+    CHECK(weather->boolean(u8"thundering", false) == dataE->boolean(u8"thundering", false));
+
+    auto dayTime = dataE->int64(u8"DayTime");
+    REQUIRE(dayTime);
+    for (auto const dimension : {u8"minecraft:overworld", u8"minecraft:the_nether", u8"minecraft:the_end"}) {
+      auto clock = clocks->compoundTag(dimension);
+      REQUIRE(clock);
+      CHECK(clock->int64(u8"total_ticks", -1) == *dayTime);
+    }
+  }
 
   unordered_set<u8string> blacklist = {
       u8"BorderCenterX",
@@ -1365,7 +1468,10 @@ static void CheckLevelDatJ(fs::path const &pathE, fs::path const &pathA) {
       u8"BorderDamagePerBlock",
       u8"CustomBossEvents",
       u8"DifficultyLocked",
-      u8"DragonFight/Dragon",
+      u8"DataVersion",
+      u8"Difficulty",
+      u8"DragonFight",
+      u8"GameRules",
       u8"LastPlayed", // JE: milli-seconds, BE: seconds
       u8"ScheduledEvents",
       u8"SpawnAngle",
@@ -1374,38 +1480,21 @@ static void CheckLevelDatJ(fs::path const &pathE, fs::path const &pathA) {
       u8"WanderingTraderSpawnDelay",
       u8"WasModded",
       u8"clearWeatherTime",
+      u8"DayTime",
+      u8"WorldGenSettings",
+      u8"difficulty_settings",
       u8"hardcore",
       u8"initialized",
+      u8"rainTime",
+      u8"raining",
       u8"removed_features",
+      u8"singleplayer_uuid",
+      u8"thunderTime",
+      u8"thundering",
+      u8"Version",
   };
-  unordered_set<u8string> ignoredGameRules = {
-      u8"announceAdvancements",
-      u8"disableElytraMovementCheck",
-      u8"disableRaids",
-      u8"forgiveDeadPlayers",
-      u8"logAdminCommands",
-      u8"maxEntityCramming",
-      u8"spectatorsGenerateChunks",
-      u8"universalAnger",
-      u8"doWardenSpawning",
-      u8"blockExplosionDropDecay",
-      u8"globalSoundEvents",
-      u8"lavaSourceConversion",
-      u8"tntExplosionDropDecay",
-      u8"waterSourceConversion",
-      u8"mobExplosionDropDecay",
-      u8"snowAccumulationHeight",
-      u8"commandModificationBlockLimit",
-      u8"doVinesSpread",
-      u8"maxCommandForkCount",
-      u8"playersNetherPortalCreativeDelay",
-      u8"playersNetherPortalDefaultDelay",
-      u8"spawnChunkRadius",
-  };
-  for (u8string const &rule : ignoredGameRules) {
-    blacklist.insert(u8"GameRules/" + rule);
-  }
   unordered_set<u8string> ignoredPlayerAttributes = {
+      u8"DataVersion",
       u8"attributes",
       u8"EnderItems/*/tag/HideFlags", //?
       u8"EnderItems/*/tag/map",

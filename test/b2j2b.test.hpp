@@ -33,6 +33,7 @@ static void CheckLevelDatB(fs::path const &expected, fs::path const &actual) {
       u8"NetworkVersion",
       u8"showdaysplayed",
       u8"BiomeOverride",
+      u8"MinimumCompatibleClientVersion",
   };
   for (auto const &i : ignore) {
     e->erase(i);
