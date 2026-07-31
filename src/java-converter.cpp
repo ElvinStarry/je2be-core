@@ -247,7 +247,7 @@ private:
     namespace fs = std::filesystem;
     std::error_code ec;
     if (!fs::is_regular_file(path, ec)) {
-      if (ec) {
+      if (ec && ec != std::errc::no_such_file_or_directory) {
         return JE2BE_ERROR_WHAT(ec.message());
       }
       data = nullptr;
