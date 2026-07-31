@@ -979,21 +979,32 @@ private:
         {u8"isMovable", Bool(true)},
     });
 
-    auto age = c->int64(u8"Age", 0);
-    tag->set(u8"Age", Int(age));
+    auto age = c->int64(u8"Age");
+    if (!age) {
+      age = c->int64(u8"age");
+    }
+    tag->set(u8"Age", Int(age.value_or(0)));
 
-    auto exitPortal = c->compoundTag(u8"ExitPortal");
-    if (exitPortal) {
-      auto x = exitPortal->int32(u8"X");
-      auto y = exitPortal->int32(u8"Y");
-      auto z = exitPortal->int32(u8"Z");
-      if (x && y && z) {
-        auto ep = List<Tag::Type::Int>();
-        ep->push_back(Int(*x));
-        ep->push_back(Int(*y));
-        ep->push_back(Int(*z));
-        tag->set(u8"ExitPortal", ep);
+    auto exitPortal = props::GetPos3iFromIntArrayTag(*c, u8"exit_portal");
+    if (exitPortal && c->boolean(u8"ExactTeleport", false)) {
+      exitPortal->fY--;
+    }
+    if (!exitPortal) {
+      if (auto legacy = c->compoundTag(u8"ExitPortal"); legacy) {
+        auto x = legacy->int32(u8"X");
+        auto y = legacy->int32(u8"Y");
+        auto z = legacy->int32(u8"Z");
+        if (x && y && z) {
+          exitPortal = Pos3i(*x, *y, *z);
+        }
       }
+    }
+    if (exitPortal) {
+      auto ep = List<Tag::Type::Int>();
+      ep->push_back(Int(exitPortal->fX));
+      ep->push_back(Int(exitPortal->fY));
+      ep->push_back(Int(exitPortal->fZ));
+      tag->set(u8"ExitPortal", ep);
     }
     Attach(c, pos, *tag);
     return tag;

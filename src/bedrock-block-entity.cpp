@@ -500,11 +500,7 @@ public:
       }
     }
     if (auto age = tagB.int32(u8"Age"); age) {
-      if (opt.fOutputDataVersion >= (int)JavaDataVersions::Release26_2) {
-        t->set(u8"age", Long(*age));
-      } else {
-        t->set(u8"Age", Long(*age));
-      }
+      t->set(u8"Age", Long(*age));
     }
     Result r;
     r.fTileEntity = t;
