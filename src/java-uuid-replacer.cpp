@@ -407,10 +407,13 @@ Status ProcessNbt(fs::path const &path,
                   Mapping const &mapping,
                   UuidReplacer::Options const &options,
                   UuidReplacer::Result &result) {
-  std::ifstream header(path, std::ios::binary);
-  std::array<unsigned char, 2> magic{};
-  header.read(reinterpret_cast<char *>(magic.data()), magic.size());
-  bool const gzip = header.gcount() == 2 && magic[0] == 0x1f && magic[1] == 0x8b;
+  bool gzip = false;
+  {
+    std::ifstream header(path, std::ios::binary);
+    std::array<unsigned char, 2> magic{};
+    header.read(reinterpret_cast<char *>(magic.data()), magic.size());
+    gzip = header.gcount() == 2 && magic[0] == 0x1f && magic[1] == 0x8b;
+  }
 
   CompoundTagPtr root;
   if (gzip) {
@@ -447,11 +450,14 @@ Status ProcessJson(fs::path const &path,
                    Mapping const &mapping,
                    UuidReplacer::Options const &options,
                    UuidReplacer::Result &result) {
-  std::ifstream stream(path, std::ios::binary);
-  if (!stream) {
-    return JE2BE_ERROR_WHAT("Cannot open JSON file: " + path.string());
+  std::string value;
+  {
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream) {
+      return JE2BE_ERROR_WHAT("Cannot open JSON file: " + path.string());
+    }
+    value.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
   }
-  std::string value((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
   auto parsed = nlohmann::json::parse(value, nullptr, false);
   if (parsed.is_discarded()) {
     return JE2BE_ERROR_WHAT("Failed to parse JSON file: " + path.string());

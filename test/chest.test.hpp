@@ -57,12 +57,13 @@ TEST_CASE("bedrock adjacent double chest pairing") {
     cache.fBlocks[pos] = chest;
   }
 
-  // Bedrock saves can describe a pair on only one half. The reverse pointer
-  // must complete that pair without joining the two middle adjacent chests.
+  // Bedrock saves can describe a pair on the lead half while storing
+  // forceunpair on its partner. The reverse pointer must complete that pair
+  // without joining the two middle adjacent chests.
   cache.fBlockEntities[positions[0]] = ChestTag(positions[0], positions[1], true);
-  cache.fBlockEntities[positions[1]] = ChestTag(positions[1], std::nullopt, false);
+  cache.fBlockEntities[positions[1]] = ChestTag(positions[1], std::nullopt, std::nullopt, true);
   cache.fBlockEntities[positions[2]] = ChestTag(positions[2], positions[3], true);
-  cache.fBlockEntities[positions[3]] = ChestTag(positions[3], std::nullopt, false);
+  cache.fBlockEntities[positions[3]] = ChestTag(positions[3], std::nullopt, std::nullopt, true);
 
   std::array<std::u8string, 4> const expectedTypes = {u8"left", u8"right", u8"left", u8"right"};
   for (size_t i = 0; i < positions.size(); i++) {
@@ -86,8 +87,8 @@ TEST_CASE("bedrock forced unpaired chest remains single") {
   ChestPairTestAccessor cache;
   cache.fBlocks[left] = chest;
   cache.fBlocks[right] = chest;
-  cache.fBlockEntities[left] = ChestTag(left, right, true);
-  cache.fBlockEntities[right] = ChestTag(right, left, false, true);
+  cache.fBlockEntities[left] = ChestTag(left, std::nullopt, std::nullopt, true);
+  cache.fBlockEntities[right] = ChestTag(right, std::nullopt, std::nullopt, true);
 
   for (Pos3i const &pos : {left, right}) {
     auto normalized = je2be::bedrock::ChestPair::Normalize(pos, *chest, *cache.fBlockEntities[pos], cache);

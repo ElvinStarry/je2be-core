@@ -78,10 +78,6 @@ public:
 private:
   template <class BlockAccessor>
   static std::optional<Pair> Resolve(Pos3i const &pos, mcfile::be::Block const &block, CompoundTag const &tag, BlockAccessor &cache) {
-    if (tag.boolean(u8"forceunpair", false)) {
-      return std::nullopt;
-    }
-
     if (auto declared = DeclaredPair(pos, tag); declared) {
       if (auto pairTag = ValidPartner(pos, block, *declared, cache); pairTag) {
         return Pair{*declared, PairLead(pos, tag, *declared, *pairTag)};
@@ -90,8 +86,9 @@ private:
 
     Pos2i const facing = Facing(block);
     std::optional<Pair> found;
-    // Either half may omit pair coordinates, so accept a unique adjacent
-    // chest that explicitly points back to this position.
+    // Bedrock commonly stores pair coordinates on the lead half and
+    // forceunpair on the other half. An explicit reverse pointer still owns
+    // that chest; forceunpair only prevents an unrelated adjacent pairing.
     for (Pos2i const offset : {Left90(facing), Right90(facing)}) {
       Pos3i const candidate(pos.fX + offset.fX, pos.fY, pos.fZ + offset.fZ);
       auto pairTag = ValidPartner(pos, block, candidate, cache);
@@ -120,7 +117,7 @@ private:
       return nullptr;
     }
     auto pairTag = cache.blockEntityAt(candidate);
-    if (!pairTag || pairTag->boolean(u8"forceunpair", false)) {
+    if (!pairTag) {
       return nullptr;
     }
     if (auto reverse = DeclaredPair(candidate, *pairTag); reverse && *reverse != pos) {
