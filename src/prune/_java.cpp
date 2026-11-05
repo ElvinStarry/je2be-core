@@ -6,7 +6,6 @@
 #include <je2be/nbt.hpp>
 
 #include <minecraft-file.hpp>
-#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
@@ -21,6 +20,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #if defined(_WIN32)
 #include <io.h>
@@ -44,24 +44,8 @@ std::string ErrnoString(int e) {
   return Errno::StringFromErrno(e);
 }
 
-bool SeekFile(FILE *fp, uint64_t offset) {
-#if defined(_WIN32)
-  return _fseeki64(fp, static_cast<__int64>(offset), SEEK_SET) == 0;
-#else
-  return fseeko(fp, static_cast<off_t>(offset), SEEK_SET) == 0;
-#endif
-}
-
-#if defined(_WIN32)
-bool TruncateFile(FILE *fp) {
-  return _chsize_s(_fileno(fp), 0) == 0;
-}
-#else
-bool TruncateFile(FILE *fp) {
-  return ftruncate(fileno(fp), 0) == 0;
-}
-#endif
-
+// Takes the vanilla session.lock with a non-blocking write lock. The file is
+// opened without truncation and is never rewritten: only the lock matters.
 class SessionLockGuard {
 public:
   ~SessionLockGuard() {
@@ -69,10 +53,7 @@ public:
   }
 
   Status lock(std::filesystem::path const &levelRoot) {
-    namespace fs = std::filesystem;
     fs::path path = levelRoot / "session.lock";
-    // Open without truncating: truncating before the lock is held would damage
-    // the marker while a running game still owns the file.
     FILE *fp = std::fopen(path.string().c_str(), "r+b");
     if (!fp && errno == ENOENT) {
       fp = std::fopen(path.string().c_str(), "w+b");
@@ -82,8 +63,7 @@ public:
       return Err("cannot open " + path.string() + " for locking: " + ErrnoString(e));
     }
 #if defined(_WIN32)
-    int fd = _fileno(fp);
-    HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+    HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(fp)));
     if (handle == INVALID_HANDLE_VALUE || !::LockFile(handle, 0, 0, MAXDWORD, MAXDWORD)) {
       std::fclose(fp);
       return Err(path.string() + " is locked; stop the world (server) before pruning");
@@ -102,13 +82,6 @@ public:
     }
 #endif
     fFile = fp;
-    fPath = path;
-    static char const kSnowman[] = "\xe2\x98\x83"; // "☃", same marker as the vanilla session lock
-    if (TruncateFile(fp)) {
-      std::fseek(fp, 0, SEEK_SET);
-      std::fwrite(kSnowman, 1, 3, fp);
-      std::fflush(fp);
-    }
     return Status::Ok();
   }
 
@@ -136,7 +109,6 @@ private:
   }
 
   FILE *fFile = nullptr;
-  std::filesystem::path fPath;
 };
 
 fs::path DimensionDirectory(je2be::java::Options const &options, fs::path const &input, CanonicalDimension dimension) {
@@ -156,7 +128,10 @@ fs::path DimensionDirectory(je2be::java::Options const &options, fs::path const 
   return options.getWorldDirectory(input, d);
 }
 
-bool ParseRegionFileName(std::string const &name, int &rx, int &rz) {
+// A region coordinate maps to chunk coordinates rx*32 .. rx*32+31. Reject
+// names whose coordinates cannot be represented as int32 chunk coordinates so
+// a crafted name cannot wrap into a different part of the world.
+bool ParseRegionFileName(std::string const &name, int32_t &rx, int32_t &rz) {
   if (!name.starts_with("r.") || !name.ends_with(".mca")) {
     return false;
   }
@@ -170,13 +145,16 @@ bool ParseRegionFileName(std::string const &name, int &rx, int &rz) {
   if (xs.empty() || zs.empty()) {
     return false;
   }
-  auto parse = [](std::string const &s, int &out) {
-    int v = 0;
+  auto parse = [](std::string const &s, int32_t &out) {
+    int64_t v = 0;
     auto result = std::from_chars(s.data(), s.data() + s.size(), v);
     if (result.ec != std::errc() || result.ptr != s.data() + s.size()) {
       return false;
     }
-    out = v;
+    if (v < std::numeric_limits<int32_t>::min() / 32 || std::numeric_limits<int32_t>::max() / 32 < v) {
+      return false;
+    }
+    out = static_cast<int32_t>(v);
     return true;
   };
   return parse(xs, rx) && parse(zs, rz);
@@ -184,21 +162,24 @@ bool ParseRegionFileName(std::string const &name, int &rx, int &rz) {
 
 struct RegionPlan {
   fs::path fPath;
-  int fRegionX = 0;
-  int fRegionZ = 0;
+  int32_t fRegionX = 0;
+  int32_t fRegionZ = 0;
   uint64_t fFileSize = 0;
   std::array<uint32_t, 1024> fLocations {};
-  std::bitset<1024> fExternal;
-  bool fHasExternal = false;
-  bool fEmpty = false;
 };
 
 uint32_t GetU32BE(unsigned char const *p) {
   return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) | (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
 }
 
-Status ReadRegionPlan(fs::path const &path, int rx, int rz, RegionPlan &plan) {
-  namespace fs = std::filesystem;
+void PutU32BE(unsigned char *p, uint32_t v) {
+  p[0] = static_cast<unsigned char>((v >> 24) & 0xff);
+  p[1] = static_cast<unsigned char>((v >> 16) & 0xff);
+  p[2] = static_cast<unsigned char>((v >> 8) & 0xff);
+  p[3] = static_cast<unsigned char>(v & 0xff);
+}
+
+Status ReadRegionPlan(fs::path const &path, int32_t rx, int32_t rz, RegionPlan &plan) {
   plan.fPath = path;
   plan.fRegionX = rx;
   plan.fRegionZ = rz;
@@ -210,7 +191,6 @@ Status ReadRegionPlan(fs::path const &path, int rx, int rz, RegionPlan &plan) {
   }
   plan.fFileSize = size;
   if (size == 0) {
-    plan.fEmpty = true;
     return Status::Ok();
   }
   if (size < 8192) {
@@ -275,14 +255,9 @@ Status ReadRegionPlan(fs::path const &path, int rx, int rz, RegionPlan &plan) {
       return Err("cannot read chunk payload header in " + path.string());
     }
     uint32_t length = GetU32BE(head);
-    uint8_t compression = head[4];
     uint64_t maxLength = static_cast<uint64_t>(range.fSectors) * 4096 - 4;
     if (length == 0 || maxLength < length) {
       return Err("region file " + path.string() + " has an invalid payload length for chunk index " + std::to_string(range.fIndex));
-    }
-    if (compression & 0x80) {
-      plan.fExternal.set(range.fIndex);
-      plan.fHasExternal = true;
     }
   }
   return Status::Ok();
@@ -294,143 +269,178 @@ std::vector<int> SelectedLocalIndices(RegionPlan const &plan, std::unordered_set
     if (plan.fLocations[i] == 0) {
       continue;
     }
-    int const cx = plan.fRegionX * 32 + (i % 32);
-    int const cz = plan.fRegionZ * 32 + (i / 32);
-    if (toDelete.find(Pos2i(cx, cz)) != toDelete.end()) {
+    int64_t const cx = static_cast<int64_t>(plan.fRegionX) * 32 + (i % 32);
+    int64_t const cz = static_cast<int64_t>(plan.fRegionZ) * 32 + (i / 32);
+    if (toDelete.find(Pos2i(static_cast<int32_t>(cx), static_cast<int32_t>(cz))) != toDelete.end()) {
       indices.push_back(i);
     }
   }
   return indices;
 }
 
-Status ClearInPlace(RegionPlan const &plan, std::vector<int> const &indices) {
-  if (indices.empty()) {
-    return Status::Ok();
+// Rewrites one region file without decoding any chunk payload:
+//   - every kept entry is copied byte-for-byte to a new sector,
+//   - selected entries are dropped and their timestamps zeroed,
+//   - kept timestamps are preserved.
+// This handles zlib, gzip, LZ4, custom compression and external-chunk markers
+// uniformly because the compression byte is never interpreted.
+Status WritePrunedRegion(RegionPlan const &plan, std::vector<int> const &selected) {
+  std::ifstream src(plan.fPath, std::ios::binary);
+  if (!src) {
+    return Err("cannot open region file " + plan.fPath.string() + " for reading");
   }
-  FILE *fp = std::fopen(plan.fPath.string().c_str(), "r+b");
-  if (!fp) {
-    int e = errno;
-    return Err("cannot open " + plan.fPath.string() + " for writing: " + ErrnoString(e));
+  std::array<unsigned char, 8192> header;
+  if (!src.read(reinterpret_cast<char *>(header.data()), header.size())) {
+    return Err("cannot read region header " + plan.fPath.string());
   }
-  std::vector<char> zeros(4096, 0);
-  for (int i : indices) {
-    uint32_t loc = plan.fLocations[i];
-    uint32_t offset = loc >> 8;
-    uint32_t sectors = loc & 0xFF;
-    // Clear the location and timestamp entries first. The chunk is already
-    // unreachable for the game even if the process dies before the payload is
-    // zeroed.
-    uint32_t zero = 0;
-    if (!SeekFile(fp, static_cast<uint64_t>(i) * 4) || std::fwrite(&zero, 4, 1, fp) != 1) {
-      int e = errno;
-      std::fclose(fp);
-      return Err("cannot clear location entry in " + plan.fPath.string() + ": " + ErrnoString(e));
-    }
-    if (!SeekFile(fp, 4096 + static_cast<uint64_t>(i) * 4) || std::fwrite(&zero, 4, 1, fp) != 1) {
-      int e = errno;
-      std::fclose(fp);
-      return Err("cannot clear timestamp entry in " + plan.fPath.string() + ": " + ErrnoString(e));
-    }
-    if (plan.fExternal.test(i)) {
-      // The external file holds the payload; only the 5-byte marker lives here.
-      if (!SeekFile(fp, static_cast<uint64_t>(offset) * 4096) || std::fwrite(zeros.data(), 5, 1, fp) != 1) {
-        int e = errno;
-        std::fclose(fp);
-        return Err("cannot clear external chunk marker in " + plan.fPath.string() + ": " + ErrnoString(e));
-      }
-    } else {
-      uint64_t remaining = static_cast<uint64_t>(sectors) * 4096;
-      if (!SeekFile(fp, static_cast<uint64_t>(offset) * 4096)) {
-        int e = errno;
-        std::fclose(fp);
-        return Err("cannot seek to chunk payload in " + plan.fPath.string() + ": " + ErrnoString(e));
-      }
-      while (remaining > 0) {
-        size_t const amount = static_cast<size_t>(std::min<uint64_t>(remaining, zeros.size()));
-        if (std::fwrite(zeros.data(), 1, amount, fp) != amount) {
-          int e = errno;
-          std::fclose(fp);
-          return Err("cannot zero chunk payload in " + plan.fPath.string() + ": " + ErrnoString(e));
-        }
-        remaining -= amount;
-      }
-    }
+  std::array<uint32_t, 1024> oldLocations {};
+  for (int i = 0; i < 1024; i++) {
+    oldLocations[i] = GetU32BE(header.data() + i * 4);
   }
-  if (std::fflush(fp) != 0) {
-    int e = errno;
-    std::fclose(fp);
-    return Err("cannot flush " + plan.fPath.string() + ": " + ErrnoString(e));
+  std::bitset<1024> selectedSet;
+  for (int i : selected) {
+    selectedSet.set(i);
   }
-  std::fclose(fp);
-  return Status::Ok();
-}
 
-Status RewriteCompact(RegionPlan const &plan, std::vector<int> const &indices) {
-  namespace fs = std::filesystem;
-  auto editor = mcfile::je::McaEditor::Open(plan.fPath);
-  if (!editor) {
-    return Err("cannot open region file " + plan.fPath.string() + " for compaction");
+  std::array<uint32_t, 1024> newLocations {};
+  uint64_t nextSector = 2;
+  for (int i = 0; i < 1024; i++) {
+    uint32_t loc = oldLocations[i];
+    if (loc == 0 || selectedSet.test(i)) {
+      continue;
+    }
+    uint32_t sectors = loc & 0xFF;
+    if (0xFFFFFF < nextSector + sectors) {
+      return Err("region file " + plan.fPath.string() + " cannot be compacted into the 24-bit sector field");
+    }
+    newLocations[i] = (static_cast<uint32_t>(nextSector) << 8) | sectors;
+    nextSector += sectors;
   }
-  for (int i : indices) {
-    int const lx = i % 32;
-    int const lz = i / 32;
-    if (!editor->extract(lx, lz)) {
-      return Err("cannot read chunk data for compaction in " + plan.fPath.string());
+
+  std::array<unsigned char, 8192> out = header;
+  for (int i = 0; i < 1024; i++) {
+    if (selectedSet.test(i)) {
+      PutU32BE(out.data() + i * 4, 0);
+      PutU32BE(out.data() + 4096 + i * 4, 0);
+    } else if (oldLocations[i] != 0) {
+      PutU32BE(out.data() + i * 4, newLocations[i]);
     }
   }
+
   fs::path tmp = plan.fPath.parent_path() / (plan.fPath.filename().string() + ".prune-tmp");
   std::error_code ec;
   fs::remove(tmp, ec);
-  ec.clear();
-  std::string writeError;
-  if (!editor->write(tmp, &writeError)) {
-    fs::remove(tmp, ec);
-    return Err(writeError.empty() ? ("cannot write " + tmp.string()) : writeError);
+  if (ec && ec != std::errc::no_such_file_or_directory) {
+    return Err("cannot remove stale temporary file " + tmp.string() + ": " + ec.message());
   }
+  auto fail = [&](std::string const &message) {
+    std::error_code removeError;
+    fs::remove(tmp, removeError);
+    return Err(message);
+  };
+  std::ofstream dst(tmp, std::ios::binary | std::ios::trunc);
+  if (!dst) {
+    return Err("cannot create temporary region file " + tmp.string());
+  }
+  dst.write(reinterpret_cast<char const *>(out.data()), out.size());
+  if (!dst) {
+    dst.close();
+    return fail("cannot write region header " + tmp.string());
+  }
+  std::vector<char> buffer(1 << 20);
+  for (int i = 0; i < 1024; i++) {
+    uint32_t loc = oldLocations[i];
+    if (loc == 0 || selectedSet.test(i)) {
+      continue;
+    }
+    uint32_t sectors = loc & 0xFF;
+    if (!src.seekg(static_cast<std::streamoff>(static_cast<uint64_t>(loc >> 8) * 4096), std::ios::beg)) {
+      dst.close();
+      return fail("cannot seek to chunk payload in " + plan.fPath.string());
+    }
+    uint64_t remaining = static_cast<uint64_t>(sectors) * 4096;
+    while (remaining > 0) {
+      size_t const amount = static_cast<size_t>(std::min<uint64_t>(remaining, buffer.size()));
+      src.read(buffer.data(), static_cast<std::streamsize>(amount));
+      if (src.gcount() != static_cast<std::streamsize>(amount)) {
+        dst.close();
+        return fail("cannot read chunk payload in " + plan.fPath.string());
+      }
+      dst.write(buffer.data(), static_cast<std::streamsize>(amount));
+      if (!dst) {
+        dst.close();
+        return fail("cannot write chunk payload to " + tmp.string());
+      }
+      remaining -= amount;
+    }
+  }
+  dst.flush();
+  if (!dst) {
+    dst.close();
+    return fail("cannot flush temporary region file " + tmp.string());
+  }
+  dst.close();
+  if (!dst) {
+    return fail("cannot close temporary region file " + tmp.string());
+  }
+  src.close();
   fs::rename(tmp, plan.fPath, ec);
   if (ec) {
     std::error_code removeError;
     fs::remove(tmp, removeError);
-    return Err("cannot replace " + plan.fPath.string() + " with compacted data: " + ec.message());
+    return Err("cannot replace " + plan.fPath.string() + " with pruned data: " + ec.message());
   }
   return Status::Ok();
 }
 
 struct FileEntry {
   fs::path fPath;
-  int fRegionX = 0;
-  int fRegionZ = 0;
+  int32_t fRegionX = 0;
+  int32_t fRegionZ = 0;
 };
 
 Status EnumerateRegionFiles(fs::path const &directory, std::vector<FileEntry> &out) {
-  namespace fs = std::filesystem;
   std::error_code ec;
-  if (!fs::is_directory(directory, ec)) {
-    if (ec) {
-      return Err("cannot inspect " + directory.string() + ": " + ec.message());
-    }
+  bool const isDirectory = fs::is_directory(directory, ec);
+  if (ec) {
+    return Err("cannot inspect region directory " + directory.string() + ": " + ec.message());
+  }
+  if (!isDirectory) {
     return Status::Ok();
   }
   fs::directory_iterator itr(directory, ec);
   if (ec) {
-    return Err("cannot list " + directory.string() + ": " + ec.message());
+    return Err("cannot list region directory " + directory.string() + ": " + ec.message());
   }
   fs::directory_iterator end;
   for (; itr != end; itr.increment(ec)) {
     if (ec) {
-      return Err("cannot list " + directory.string() + ": " + ec.message());
+      return Err("cannot list region directory " + directory.string() + ": " + ec.message());
     }
-    fs::path const &p = itr->path();
     std::error_code typeError;
-    if (!itr->is_regular_file(typeError)) {
+    bool const isFile = itr->is_regular_file(typeError);
+    if (typeError) {
+      return Err("cannot inspect region entry " + itr->path().string() + ": " + typeError.message());
+    }
+    if (!isFile) {
       continue;
     }
-    int rx = 0;
-    int rz = 0;
-    if (!ParseRegionFileName(p.filename().string(), rx, rz)) {
+    std::string const name = itr->path().filename().string();
+    if (!name.ends_with(".mca")) {
       continue;
     }
-    out.push_back({p, rx, rz});
+    int32_t rx = 0;
+    int32_t rz = 0;
+    if (!ParseRegionFileName(name, rx, rz)) {
+      if (name.starts_with("r.")) {
+        return Err("region file " + itr->path().string() + " has an unsupported name");
+      }
+      continue;
+    }
+    out.push_back({itr->path(), rx, rz});
+  }
+  if (ec) {
+    return Err("cannot list region directory " + directory.string() + ": " + ec.message());
   }
   return Status::Ok();
 }
@@ -453,11 +463,9 @@ bool ParseChunkId(std::string const &s, int32_t &out) {
 
 struct JavaMapFile {
   fs::path fPath;
-  bool fMapsDirectory = false;
 };
 
 Status EnumerateMapFiles(JavaWorldLocation const &location, std::vector<JavaMapFile> &out) {
-  namespace fs = std::filesystem;
   std::vector<fs::path> candidates;
   auto add = [&candidates](fs::path const &p) {
     candidates.push_back(p);
@@ -478,7 +486,11 @@ Status EnumerateMapFiles(JavaWorldLocation const &location, std::vector<JavaMapF
     if (!visited.insert(key).second) {
       continue;
     }
-    if (!fs::is_directory(dir, ec)) {
+    bool const isDirectory = fs::is_directory(dir, ec);
+    if (ec) {
+      return Err("cannot inspect map directory " + dir.string() + ": " + ec.message());
+    }
+    if (!isDirectory) {
       continue;
     }
     bool const mapsDirectory = dir.filename() == "maps";
@@ -492,29 +504,34 @@ Status EnumerateMapFiles(JavaWorldLocation const &location, std::vector<JavaMapF
         return Err("cannot list map directory " + dir.string() + ": " + ec.message());
       }
       std::error_code typeError;
-      if (!itr->is_regular_file(typeError)) {
+      bool const isFile = itr->is_regular_file(typeError);
+      if (typeError) {
+        return Err("cannot inspect map entry " + itr->path().string() + ": " + typeError.message());
+      }
+      if (!isFile) {
         continue;
       }
-      std::string name = itr->path().filename().string();
+      std::string const name = itr->path().filename().string();
       if (!name.ends_with(".dat")) {
         continue;
       }
       int32_t id = 0;
       if (mapsDirectory) {
-        std::string stem = name.substr(0, name.size() - 4);
-        if (!ParseChunkId(stem, id)) {
+        if (!ParseChunkId(name.substr(0, name.size() - 4), id)) {
           continue;
         }
       } else {
         if (!name.starts_with("map_")) {
           continue;
         }
-        std::string stem = name.substr(4, name.size() - 4 - 4);
-        if (!ParseChunkId(stem, id)) {
+        if (!ParseChunkId(name.substr(4, name.size() - 4 - 4), id)) {
           continue;
         }
       }
-      out.push_back({itr->path(), mapsDirectory});
+      out.push_back({itr->path()});
+    }
+    if (ec) {
+      return Err("cannot list map directory " + dir.string() + ": " + ec.message());
     }
   }
   return Status::Ok();
@@ -539,13 +556,11 @@ Status ReadJavaMapDimension(CompoundTag const &data, std::optional<CanonicalDime
     return Status::Ok();
   }
   case Tag::Type::Int: {
-    int32_t v = dimension->asInt()->fValue;
-    out = CanonicalDimensionFromInt(v);
+    out = CanonicalDimensionFromInt(dimension->asInt()->fValue);
     return Status::Ok();
   }
   case Tag::Type::Byte: {
-    int32_t v = static_cast<int8_t>(dimension->asByte()->fValue);
-    out = CanonicalDimensionFromInt(v);
+    out = CanonicalDimensionFromInt(static_cast<int8_t>(dimension->asByte()->fValue));
     return Status::Ok();
   }
   case Tag::Type::End:
@@ -598,15 +613,13 @@ Status ScanJavaMaps(JavaWorldLocation const &location, CanonicalDimension target
     if (!xCenter || !zCenter) {
       return Err("map " + file.fPath.string() + " is missing xCenter or zCenter");
     }
-    if (!scale) {
-      scale = 0;
-    }
+    int const scaleValue = scale ? *scale : 0;
     count++;
     if (!dimension || *dimension != target) {
       continue;
     }
     ChunkRect rect;
-    st = MapRectFromCenter(*xCenter, *zCenter, *scale, rect);
+    st = MapRectFromCenter(*xCenter, *zCenter, scaleValue, rect);
     if (!st.ok()) {
       return JE2BE_ERROR_PUSH(st);
     }
@@ -616,19 +629,23 @@ Status ScanJavaMaps(JavaWorldLocation const &location, CanonicalDimension target
 }
 
 Status RemoveExternalFiles(std::vector<fs::path> const &directories, std::unordered_set<Pos2i, Pos2iHasher> const &deleted, uint64_t &removed) {
-  namespace fs = std::filesystem;
   for (fs::path const &dir : directories) {
     std::error_code ec;
-    if (!fs::is_directory(dir, ec)) {
+    bool const isDirectory = fs::is_directory(dir, ec);
+    if (ec) {
+      return Err("cannot inspect region directory " + dir.string() + ": " + ec.message());
+    }
+    if (!isDirectory) {
       continue;
     }
     for (Pos2i const &p : deleted) {
       fs::path path = dir / ("c." + std::to_string(p.fX) + "." + std::to_string(p.fZ) + ".mcc");
       std::error_code existsError;
-      if (!fs::is_regular_file(path, existsError)) {
-        if (existsError) {
-          return Err("cannot inspect external chunk file " + path.string() + ": " + existsError.message());
-        }
+      bool const isFile = fs::is_regular_file(path, existsError);
+      if (existsError) {
+        return Err("cannot inspect external chunk file " + path.string() + ": " + existsError.message());
+      }
+      if (!isFile) {
         continue;
       }
       std::error_code removeError;
@@ -644,24 +661,35 @@ Status RemoveExternalFiles(std::vector<fs::path> const &directories, std::unorde
 } // namespace
 
 Status LocateJavaWorld(std::filesystem::path const &input, CanonicalDimension dimension, JavaWorldLocation &out) {
-  namespace fs = std::filesystem;
   std::error_code ec;
-  if (!fs::is_directory(input, ec)) {
+  bool const isDirectory = fs::is_directory(input, ec);
+  if (ec) {
+    return Err("cannot inspect input directory " + input.string() + ": " + ec.message());
+  }
+  if (!isDirectory) {
     return Err("input directory " + input.string() + " does not exist");
   }
   fs::path levelRoot;
   bool paper = false;
-  if (fs::is_regular_file(input / "level.dat", ec) && !ec) {
+  ec.clear();
+  bool const rootLevel = fs::is_regular_file(input / "level.dat", ec);
+  if (ec) {
+    return Err("cannot inspect " + (input / "level.dat").string() + ": " + ec.message());
+  }
+  if (rootLevel) {
     levelRoot = input;
     paper = false;
   } else {
     ec.clear();
-    if (fs::is_regular_file(input / "world" / "level.dat", ec) && !ec) {
-      levelRoot = input / "world";
-      paper = true;
-    } else {
+    bool const paperLevel = fs::is_regular_file(input / "world" / "level.dat", ec);
+    if (ec) {
+      return Err("cannot inspect " + (input / "world" / "level.dat").string() + ": " + ec.message());
+    }
+    if (!paperLevel) {
       return Err(input.string() + " is not a Java world directory (level.dat not found)");
     }
+    levelRoot = input / "world";
+    paper = true;
   }
   je2be::java::Options options;
   options.fLevelDirectoryStructure = paper ? LevelDirectoryStructure::Paper : LevelDirectoryStructure::Vanilla;
@@ -674,14 +702,16 @@ Status LocateJavaWorld(std::filesystem::path const &input, CanonicalDimension di
 }
 
 Status PruneJavaWorld(JavaWorldLocation const &location, Config const &config, Action fallback, JavaPruneResult &result) {
-  namespace fs = std::filesystem;
-
   std::optional<CanonicalDimension> target = CanonicalDimensionFromInt(config.fDimension);
   if (!target) {
     return Err("unsupported dimension in config");
   }
   std::error_code ec;
-  if (!fs::is_directory(location.fDimensionDirectory, ec)) {
+  bool const dimensionExists = fs::is_directory(location.fDimensionDirectory, ec);
+  if (ec) {
+    return Err("cannot inspect dimension directory " + location.fDimensionDirectory.string() + ": " + ec.message());
+  }
+  if (!dimensionExists) {
     if (*target != CanonicalDimension::Overworld) {
       result.fWarnings.push_back("dimension directory " + location.fDimensionDirectory.string() + " does not exist; nothing to prune");
       return Status::Ok();
@@ -726,9 +756,9 @@ Status PruneJavaWorld(JavaWorldLocation const &location, Config const &config, A
         if (plan.fLocations[i] == 0) {
           continue;
         }
-        int cx = plan.fRegionX * 32 + (i % 32);
-        int cz = plan.fRegionZ * 32 + (i / 32);
-        existing.insert(Pos2i(cx, cz));
+        int64_t const cx = static_cast<int64_t>(plan.fRegionX) * 32 + (i % 32);
+        int64_t const cz = static_cast<int64_t>(plan.fRegionZ) * 32 + (i / 32);
+        existing.insert(Pos2i(static_cast<int32_t>(cx), static_cast<int32_t>(cz)));
       }
       plans.push_back(std::move(plan));
     }
@@ -758,26 +788,11 @@ Status PruneJavaWorld(JavaWorldLocation const &location, Config const &config, A
     if (indices.empty()) {
       continue;
     }
-    result.fDeletedRegionEntries += indices.size();
-    if (plan.fHasExternal) {
-      // Never rewrite a region file that contains external chunks: McaEditor
-      // cannot decode the 0x80 marker and would drop kept external entries.
-      st = ClearInPlace(plan, indices);
-      if (!st.ok()) {
-        return JE2BE_ERROR_PUSH(st);
-      }
-      continue;
-    }
-    st = RewriteCompact(plan, indices);
+    st = WritePrunedRegion(plan, indices);
     if (!st.ok()) {
-      // A payload that cannot be decompressed (unknown compression, corruption)
-      // must not block deletion of the whole slot. Fall back to clearing only
-      // the selected entries in place, which leaves kept chunks untouched.
-      st = ClearInPlace(plan, indices);
-      if (!st.ok()) {
-        return JE2BE_ERROR_PUSH(st);
-      }
+      return JE2BE_ERROR_PUSH(st);
     }
+    result.fDeletedRegionEntries += indices.size();
   }
 
   uint64_t removedExternal = 0;

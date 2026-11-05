@@ -1,5 +1,7 @@
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
 
@@ -55,14 +57,6 @@ je2be::prune::Config ParseTestConfig(std::string const &json) {
 std::string SerializeLittleEndian(CompoundTag const &tag) {
   auto stream = std::make_shared<mcfile::stream::ByteStream>();
   REQUIRE(CompoundTag::Write(tag, stream, mcfile::Encoding::LittleEndian));
-  std::string out;
-  stream->drain(out);
-  return out;
-}
-
-std::string SerializeJava(CompoundTag const &tag) {
-  auto stream = std::make_shared<mcfile::stream::ByteStream>();
-  REQUIRE(CompoundTag::Write(tag, stream, mcfile::Encoding::Java));
   std::string out;
   stream->drain(out);
   return out;
@@ -148,6 +142,19 @@ TEST_CASE("prune-chunks-config") {
     CHECK(!Config::ParseJson(PruneConfigJson(R"({"action":"keep","minCx":1,"maxCx":0,"minCz":0,"maxCz":0})"), config).ok());
     CHECK(!Config::ParseJson(PruneConfigJson(R"({"action":"keep","minCx":0.5,"maxCx":1,"minCz":0,"maxCz":0})"), config).ok());
     CHECK(!Config::ParseJson(PruneConfigJson(R"({"action":"keep","minCx":0,"maxCx":1,"minCz":0,"maxCz":0})", "keep").substr(0, 10), config).ok());
+    // Values that nlohmann types as uint64 must not wrap into the int32 range.
+    CHECK(!Config::ParseJson(R"({"schemaVersion":1,"format":"mbr-chunk-selection","dimension":0,"chunkSize":16,"overlapPolicy":"last-wins","regions":[{"action":"keep","minCx":18446744073709551615,"maxCx":0,"minCz":0,"maxCz":0}]})", config).ok());
+    CHECK(!Config::ParseJson(R"({"schemaVersion":18446744073709551615,"format":"mbr-chunk-selection","dimension":0,"chunkSize":16,"overlapPolicy":"last-wins","regions":[]})", config).ok());
+    CHECK(!Config::ParseJson(R"({"schemaVersion":1,"format":"mbr-chunk-selection","dimension":18446744073709551615,"chunkSize":16,"overlapPolicy":"last-wins","regions":[]})", config).ok());
+    CHECK(!Config::ParseJson(R"({"schemaVersion":1,"format":"mbr-chunk-selection","dimension":0,"chunkSize":16,"overlapPolicy":"last-wins","regions":[{"action":"keep","minCx":-9223372036854775808,"maxCx":0,"minCz":0,"maxCz":0}]})", config).ok());
+  }
+  SUBCASE("metadata-is-optional") {
+    using je2be::prune::Config;
+    Config config;
+    CHECK(Config::ParseJson(R"({"schemaVersion":1,"format":"mbr-chunk-selection","dimension":0,"chunkSize":16,"overlapPolicy":"last-wins","regions":[]})", config).ok());
+    CHECK(config.fRegions.empty());
+    CHECK(config.fDefaultAction == je2be::prune::Action::Keep);
+    CHECK(Config::ParseJson(R"({"schemaVersion":1,"format":"mbr-chunk-selection","dimension":0,"chunkSize":16,"overlapPolicy":"last-wins","regions":[],"createdAt":null,"source":null})", config).ok());
   }
 }
 
@@ -235,6 +242,7 @@ TEST_CASE("prune-chunks-java-world") {
     auto root = std::make_shared<CompoundTag>();
     root->set(u8"data", data);
     root->set(u8"DataVersion", Int(4903));
+    fs::create_directories(dir / "data");
     auto stream = std::make_shared<mcfile::stream::GzFileOutputStream>(dir / "data" / "map_0.dat");
     REQUIRE(CompoundTag::Write(*root, stream, mcfile::Encoding::Java));
     stream.reset();
@@ -360,12 +368,22 @@ TEST_CASE("prune-chunks-bedrock-world") {
   std::string const actorA("AAAAAAA1", 8);
   std::string const actorB("BBBBBBB2", 8);
   std::string const actorC("CCCCCCC3", 8);
+  std::string const actorD("DDDDDDD4", 8);
 
   std::string digp00;
   digp00.append(actorA);
   digp00.append(actorB);
+  digp00.append(actorD);
   std::string digp10 = actorB;
   std::string digp100 = actorC;
+  // An actor referenced by a digp in an unknown dimension must keep its
+  // actorprefix even when its dimension-0 digp is deleted.
+  std::string unknownDimensionDigp = "digp";
+  unknownDimensionDigp.resize(16);
+  PutI32LE(unknownDimensionDigp, 4, 0);
+  PutI32LE(unknownDimensionDigp, 8, 0);
+  PutI32LE(unknownDimensionDigp, 12, 3);
+  std::string unknownDimensionValue = actorD;
 
   std::string unknownTagKey(9, '\0');
   PutI32LE(unknownTagKey, 0, 0);
@@ -376,7 +394,7 @@ TEST_CASE("prune-chunks-bedrock-world") {
     leveldb::Options options;
     options.create_if_missing = true;
     leveldb::DB *raw = nullptr;
-    REQUIRE(leveldb::DB::Open(options, dbDir.string(), &raw).ok());
+    REQUIRE(leveldb::DB::Open(options, dbDir, &raw).ok());
     std::unique_ptr<leveldb::DB> db(raw);
     auto put = [&](std::string const &key, std::string const &value) {
       REQUIRE(db->Put(leveldb::WriteOptions(), key, value).ok());
@@ -397,6 +415,8 @@ TEST_CASE("prune-chunks-bedrock-world") {
     put(mcfile::be::DbKey::Actorprefix(actorA), actorValue);
     put(mcfile::be::DbKey::Actorprefix(actorB), actorValue);
     put(mcfile::be::DbKey::Actorprefix(actorC), actorValue);
+    put(mcfile::be::DbKey::Actorprefix(actorD), actorValue);
+    put(unknownDimensionDigp, unknownDimensionValue);
     put("mobevents", "mob");
     put("scoreboard", "sc");
     put("BiomeData", "bd");
@@ -421,7 +441,7 @@ TEST_CASE("prune-chunks-bedrock-world") {
     leveldb::Options options;
     options.create_if_missing = false;
     leveldb::DB *raw = nullptr;
-    REQUIRE(leveldb::DB::Open(options, dbDir.string(), &raw).ok());
+    REQUIRE(leveldb::DB::Open(options, dbDir, &raw).ok());
     std::unique_ptr<leveldb::DB> db(raw);
     auto exists = [&](std::string const &key) {
       std::string value;
@@ -442,6 +462,8 @@ TEST_CASE("prune-chunks-bedrock-world") {
     CHECK(!exists(mcfile::be::DbKey::Actorprefix(actorA)));
     CHECK(exists(mcfile::be::DbKey::Actorprefix(actorB)));
     CHECK(!exists(mcfile::be::DbKey::Actorprefix(actorC)));
+    CHECK(exists(mcfile::be::DbKey::Actorprefix(actorD)));
+    CHECK(exists(unknownDimensionDigp));
     CHECK(exists("mobevents"));
     CHECK(exists("scoreboard"));
     CHECK(exists("BiomeData"));

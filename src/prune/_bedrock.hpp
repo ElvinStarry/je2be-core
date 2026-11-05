@@ -29,8 +29,11 @@ bool IsBedrockGlobalKey(std::string const &key);
 // chunk data are accepted; arbitrary binary keys are rejected.
 bool ParseBedrockChunkKey(std::string const &key, BedrockChunkKey &out);
 
-// Parses a "digp" key (per-chunk entity id list).
-bool ParseBedrockDigpKey(std::string const &key, int32_t &cx, int32_t &cz, CanonicalDimension &dimension);
+// Parses a "digp" key (per-chunk entity id list). The raw Bedrock dimension
+// value is returned for every 12/16-byte key, including unknown dimension
+// values: those records still contribute actor references and must not make a
+// shared actorprefix look unreferenced.
+bool ParseBedrockDigpKey(std::string const &key, int32_t &cx, int32_t &cz, int32_t &bedrockDimension);
 
 struct BedrockPruneResult {
   uint64_t fTotalKeys = 0;

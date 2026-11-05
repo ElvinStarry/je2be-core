@@ -44,14 +44,10 @@ public:
   std::string fFormat;
   int32_t fDimension = 0;
   int32_t fChunkSize = 0;
+  // Optional metadata. It documents the export UI default and never drives
+  // execution; --default is the only fallback source.
   Action fDefaultAction = Action::Keep;
   std::string fOverlapPolicy;
-  std::string fCreatedAt;
-  struct Source {
-    std::string fArchiveSha256;
-    std::string fRulesVersion;
-    std::string fDatasetCreatedAt;
-  } fSource;
   std::vector<ChunkRegion> fRegions;
 
   // Returns the action of the last matching region, or nullopt when no region

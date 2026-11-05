@@ -80,6 +80,18 @@ std::optional<CanonicalDimension> FromBedrockDimension(int32_t d) {
   }
 }
 
+bool BedrockDimensionMatches(int32_t bedrockDimension, CanonicalDimension target) {
+  switch (target) {
+  case CanonicalDimension::Nether:
+    return bedrockDimension == 1;
+  case CanonicalDimension::End:
+    return bedrockDimension == 2;
+  case CanonicalDimension::Overworld:
+  default:
+    return bedrockDimension == 0;
+  }
+}
+
 
 // Matches only the chunk-key byte shapes documented by the Bedrock level
 // format, and only tags that belong to chunk-scoped records. All global ASCII
@@ -280,21 +292,17 @@ bool ParseBedrockChunkKey(std::string const &key, BedrockChunkKey &out) {
   return true;
 }
 
-bool ParseBedrockDigpKey(std::string const &key, int32_t &cx, int32_t &cz, CanonicalDimension &dimension) {
+bool ParseBedrockDigpKey(std::string const &key, int32_t &cx, int32_t &cz, int32_t &bedrockDimension) {
   if (key.size() == 12 && key.starts_with("digp")) {
     cx = ReadI32LE(key, 4);
     cz = ReadI32LE(key, 8);
-    dimension = CanonicalDimension::Overworld;
+    bedrockDimension = 0;
     return true;
   }
   if (key.size() == 16 && key.starts_with("digp")) {
-    auto d = FromBedrockDimension(ReadI32LE(key, 12));
-    if (!d) {
-      return false;
-    }
     cx = ReadI32LE(key, 4);
     cz = ReadI32LE(key, 8);
-    dimension = *d;
+    bedrockDimension = ReadI32LE(key, 12);
     return true;
   }
   return false;
@@ -321,7 +329,7 @@ Status PruneBedrockWorld(std::filesystem::path const &input, Config const &confi
   options.create_if_missing = false;
   options.compression = leveldb::kZlibRawCompression;
   leveldb::DB *raw = nullptr;
-  leveldb::Status openStatus = leveldb::DB::Open(options, dbDir.string(), &raw);
+  leveldb::Status openStatus = leveldb::DB::Open(options, dbDir, &raw);
   if (!openStatus.ok()) {
     return Err("cannot open Bedrock database " + dbDir.string() + " (stop the world before pruning): " + openStatus.ToString());
   }
@@ -351,7 +359,7 @@ Status PruneBedrockWorld(std::filesystem::path const &input, Config const &confi
 
       int32_t dx = 0;
       int32_t dz = 0;
-      CanonicalDimension digpDimension;
+      int32_t digpDimension = 0;
       if (ParseBedrockDigpKey(key, dx, dz, digpDimension)) {
         leveldb::Slice value = it->value();
         if (value.size() % 8 != 0) {
@@ -361,7 +369,7 @@ Status PruneBedrockWorld(std::filesystem::path const &input, Config const &confi
         for (size_t i = 0; i < count; i++) {
           actorRefs[std::string(value.data() + i * 8, 8)]++;
         }
-        if (digpDimension == *target) {
+        if (BedrockDimensionMatches(digpDimension, *target)) {
           existing.insert(Pos2i(dx, dz));
         }
         continue;
@@ -438,9 +446,9 @@ Status PruneBedrockWorld(std::filesystem::path const &input, Config const &confi
 
       int32_t dx = 0;
       int32_t dz = 0;
-      CanonicalDimension digpDimension;
+      int32_t digpDimension = 0;
       if (ParseBedrockDigpKey(key, dx, dz, digpDimension)) {
-        if (digpDimension != *target || deleted.find(Pos2i(dx, dz)) == deleted.end()) {
+        if (!BedrockDimensionMatches(digpDimension, *target) || deleted.find(Pos2i(dx, dz)) == deleted.end()) {
           continue;
         }
         leveldb::Slice value = it->value();

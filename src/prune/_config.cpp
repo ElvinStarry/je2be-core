@@ -4,7 +4,6 @@
 
 #include <fstream>
 #include <limits>
-#include <regex>
 #include <sstream>
 
 namespace je2be::prune {
@@ -13,36 +12,6 @@ namespace {
 
 Status Fail(std::string const &what) {
   return JE2BE_ERROR_WHAT(what);
-}
-
-bool IsHexString(std::string const &s, size_t length) {
-  if (s.size() != length) {
-    return false;
-  }
-  for (char c : s) {
-    bool ok = ('0' <= c && c <= '9') || ('a' <= c && c <= 'f') || ('A' <= c && c <= 'F');
-    if (!ok) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool IsIso8601(std::string const &s) {
-  static std::regex const re(R"(^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$)");
-  return std::regex_match(s, re);
-}
-
-Status GetObject(nlohmann::json const &parent, char const *key, nlohmann::json const *&out, std::string const &context) {
-  auto found = parent.find(key);
-  if (found == parent.end()) {
-    return Fail(context + ": missing \"" + key + "\"");
-  }
-  if (!found->is_object()) {
-    return Fail(context + ": \"" + key + "\" must be an object");
-  }
-  out = &*found;
-  return Status::Ok();
 }
 
 Status GetString(nlohmann::json const &parent, char const *key, std::string &out, std::string const &context) {
@@ -61,6 +30,16 @@ Status GetInt32(nlohmann::json const &parent, char const *key, int32_t &out, std
   auto found = parent.find(key);
   if (found == parent.end()) {
     return Fail(context + ": missing \"" + key + "\"");
+  }
+  // nlohmann reports uint64 values as integers too. Convert them separately
+  // so UINT64_MAX does not wrap to -1 through get<int64_t>().
+  if (found->is_number_unsigned()) {
+    uint64_t v = found->get<uint64_t>();
+    if (std::numeric_limits<int32_t>::max() < v) {
+      return Fail(context + ": \"" + key + "\" is out of int32 range");
+    }
+    out = static_cast<int32_t>(v);
+    return Status::Ok();
   }
   if (!found->is_number_integer()) {
     return Fail(context + ": \"" + key + "\" must be an integer");
@@ -120,16 +99,13 @@ Status Config::ParseJson(std::string const &text, Config &out) {
   std::string const context = "config";
 
   {
-    auto found = root.find("schemaVersion");
-    if (found == root.end()) {
-      return Fail(context + ": missing \"schemaVersion\"");
+    int32_t version = 0;
+    Status st = GetInt32(root, "schemaVersion", version, context);
+    if (!st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
     }
-    if (!found->is_number_integer()) {
-      return Fail(context + ": \"schemaVersion\" must be an integer");
-    }
-    int64_t v = found->get<int64_t>();
-    if (v != 1) {
-      return Fail(context + ": unsupported \"schemaVersion\" " + std::to_string(v) + "; expected 1");
+    if (version != 1) {
+      return Fail(context + ": unsupported \"schemaVersion\" " + std::to_string(version) + "; expected 1");
     }
     out.fSchemaVersion = 1;
   }
@@ -164,13 +140,12 @@ Status Config::ParseJson(std::string const &text, Config &out) {
     }
   }
 
-  {
-    std::string s;
-    Status st = GetString(root, "defaultAction", s, context);
-    if (!st.ok()) {
-      return JE2BE_ERROR_PUSH(st);
+  out.fDefaultAction = Action::Keep;
+  if (auto found = root.find("defaultAction"); found != root.end()) {
+    if (!found->is_string()) {
+      return Fail(context + ": \"defaultAction\" must be a string");
     }
-    st = ParseAction(s, out.fDefaultAction, context + ".defaultAction");
+    Status st = ParseAction(found->get<std::string>(), out.fDefaultAction, context + ".defaultAction");
     if (!st.ok()) {
       return JE2BE_ERROR_PUSH(st);
     }
@@ -183,42 +158,6 @@ Status Config::ParseJson(std::string const &text, Config &out) {
     }
     if (out.fOverlapPolicy != "last-wins") {
       return Fail(context + ": unsupported \"overlapPolicy\" \"" + out.fOverlapPolicy + "\"; expected \"last-wins\"");
-    }
-  }
-
-  {
-    Status st = GetString(root, "createdAt", out.fCreatedAt, context);
-    if (!st.ok()) {
-      return JE2BE_ERROR_PUSH(st);
-    }
-    if (!IsIso8601(out.fCreatedAt)) {
-      return Fail(context + ": \"createdAt\" is not an ISO-8601 timestamp");
-    }
-  }
-
-  {
-    json const *source = nullptr;
-    Status st = GetObject(root, "source", source, context);
-    if (!st.ok()) {
-      return JE2BE_ERROR_PUSH(st);
-    }
-    st = GetString(*source, "archiveSha256", out.fSource.fArchiveSha256, context + ".source");
-    if (!st.ok()) {
-      return JE2BE_ERROR_PUSH(st);
-    }
-    if (!IsHexString(out.fSource.fArchiveSha256, 64)) {
-      return Fail(context + ".source: \"archiveSha256\" must be 64 hex characters");
-    }
-    st = GetString(*source, "rulesVersion", out.fSource.fRulesVersion, context + ".source");
-    if (!st.ok()) {
-      return JE2BE_ERROR_PUSH(st);
-    }
-    st = GetString(*source, "datasetCreatedAt", out.fSource.fDatasetCreatedAt, context + ".source");
-    if (!st.ok()) {
-      return JE2BE_ERROR_PUSH(st);
-    }
-    if (!IsIso8601(out.fSource.fDatasetCreatedAt)) {
-      return Fail(context + ".source: \"datasetCreatedAt\" is not an ISO-8601 timestamp");
     }
   }
 
