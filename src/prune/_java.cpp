@@ -631,11 +631,13 @@ Status ScanJavaMaps(JavaWorldLocation const &location, CanonicalDimension target
     if (!root->read(reader)) {
       return Err("cannot read map data " + file.fPath.string());
     }
-    auto dataPtr = root->compoundTag(u8"data");
-    if (!dataPtr) {
+    // CompoundTag::read reads the named root wrapper as a single entry, so the
+    // map payload lives at /data (the same path je2be's map reader uses).
+    Tag const *dataTag = root->query(u8"/data");
+    if (dataTag->type() != Tag::Type::Compound) {
       return Err("map " + file.fPath.string() + " has no data compound");
     }
-    CompoundTag const *data = dataPtr.get();
+    CompoundTag const *data = dataTag->asCompound();
     std::optional<CanonicalDimension> dimension;
     st = ReadJavaMapDimension(*data, dimension, file.fPath.string());
     if (!st.ok()) {
