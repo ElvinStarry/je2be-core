@@ -297,6 +297,21 @@ Status ReadRegionPlan(fs::path const &path, int32_t rx, int32_t rz, RegionPlan &
   return Status::Ok();
 }
 
+std::vector<int> SelectedLocalIndices(RegionPlan const &plan, std::unordered_set<Pos2i, Pos2iHasher> const &toDelete) {
+  std::vector<int> indices;
+  for (int i = 0; i < 1024; i++) {
+    if (plan.fLocations[i] == 0) {
+      continue;
+    }
+    int64_t const cx = static_cast<int64_t>(plan.fRegionX) * 32 + (i % 32);
+    int64_t const cz = static_cast<int64_t>(plan.fRegionZ) * 32 + (i / 32);
+    if (toDelete.find(Pos2i(static_cast<int32_t>(cx), static_cast<int32_t>(cz))) != toDelete.end()) {
+      indices.push_back(i);
+    }
+  }
+  return indices;
+}
+
 // Rewrites one region file without decoding any chunk payload:
 //   - every kept entry is copied byte-for-byte to a new sector,
 //   - selected entries are dropped and their timestamps zeroed,
