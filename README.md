@@ -10,6 +10,8 @@ kept.
 
 ```sh
 prune-chunks -i /path/to/world -c selection.json -d keep
+# Delete everything the config does not keep or map-protect:
+prune-chunks -i /path/to/world -c selection.json -d delete
 ```
 
 - `-i`, `--input`: Java world directory (vanilla, paper server root, or the
@@ -60,7 +62,13 @@ maps use `data/map_<id>.dat` (legacy) or `data/minecraft/maps/<id>.dat`
   particular, village records span multiple chunks and are updated by the
   game; deleting a village because part of its area was pruned would discard
   surviving village state. Orphaned global entries are a documented boundary
-  of this tool.
+  of this tool. After a successful Bedrock prune the database is fully
+  compacted with `CompactRange`: logical deletions are already committed by
+  the batched LevelDB writes, and the compaction additionally materializes
+  tombstones for readers that only inspect table files, reclaims disk space,
+  and can take time proportional to the database size. `CompactRange` has no
+  error return; a compaction I/O failure is logged by LevelDB while the
+  database remains logically pruned.
 
 The tool iterates the chunks/keys that actually exist in the world and tests
 each against the last-wins config rectangles and the protected map rectangles.
@@ -89,9 +97,10 @@ temporary file (kept sectors copied byte-for-byte, selected entries dropped)
 and renamed over the original, so one region file is never left half-written.
 Sidecar `.mcc` removal happens after the region rewrites, and the three
 `region`/`entities`/`poi` files are separate. Bedrock deletions use batched
-LevelDB writes. There is no cross-file transaction: a crash or I/O error
-partway through can leave a partially pruned but individually consistent
-world. Re-running the same config is idempotent for the chunks that remain.
+LevelDB writes followed by a full-range compaction. There is no cross-file
+transaction: a crash, I/O error, or compaction failure partway through can
+leave a partially pruned but individually consistent world. Re-running the
+same config is idempotent for the chunks that remain.
 
 ## Override world settings
 
