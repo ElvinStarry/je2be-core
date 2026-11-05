@@ -83,16 +83,21 @@ the database; either lock failure exits before any write. **Back up the world
 before running a destructive prune.**
 
 Before writing, the tool validates the whole config, parses every stored map
-in the target dimension, and validates every region header/sector range (Java)
-or map record (Bedrock). A damaged map, an unknown map field layout, an
-overlapping/out-of-range region entry, or an unreadable record causes an error
-and exit *before* any chunk data is written.
+in the target dimension, and validates the region headers and payload ranges
+of Java regions that contain chunks selected for deletion. A damaged map, an
+unknown map field layout, or an invalid config aborts before any chunk data is
+written. A region whose final allocated sector is shorter than 4096 bytes
+because only trailing padding is missing is accepted; its actual payload must
+be complete. A payload missing even one byte, an overlapping sector range, or
+an out-of-range entry still aborts before any write.
 
 Atomicity limits: each Java region file is rewritten to a same-directory
 temporary file (kept sectors copied byte-for-byte, selected entries dropped)
 and renamed over the original, so one region file is never left half-written.
-Sidecar `.mcc` removal happens after the region rewrites, and the three
-`region`/`entities`/`poi` files are separate. Bedrock deletions use batched
+A partial final source sector is copied up to the actual file end and padded
+with zeros to its declared sector length. Sidecar `.mcc` removal happens after
+the region rewrites, and the three `region`/`entities`/`poi` files are
+separate. Bedrock deletions use batched
 LevelDB writes; compacting and reclaiming obsolete table data is left to
 LevelDB's normal background compaction. There is no cross-file transaction:
 a crash or I/O error partway through can leave a partially pruned but

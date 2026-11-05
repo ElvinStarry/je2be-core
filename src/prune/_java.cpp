@@ -237,6 +237,11 @@ Status ReadRegionPlan(fs::path const &path, int32_t rx, int32_t rz, RegionPlan &
     plan.fLocations[i] = GetU32BE(header.data() + i * 4);
   }
 
+  // A region's last allocated sector may be shorter than 4096 bytes when the
+  // file ends exactly at the last payload (Minecraft normally pads it). Allow
+  // that partial final sector, but never allow a declared sector beyond the
+  // file's allocated sector count, a missing payload byte, or an overlap.
+  uint64_t const allocatedSectors = (size + 4095) / 4096;
   struct Range {
     uint32_t fOffset;
     uint32_t fSectors;
@@ -256,9 +261,24 @@ Status ReadRegionPlan(fs::path const &path, int32_t rx, int32_t rz, RegionPlan &
     if (offset < 2) {
       return Err("region file " + path.string() + " has chunk index " + std::to_string(i) + " pointing into the header");
     }
-    uint64_t end = (static_cast<uint64_t>(offset) + sectors) * 4096;
-    if (size < end) {
-      return Err("region file " + path.string() + " has chunk index " + std::to_string(i) + " pointing past the end of the file");
+    if (allocatedSectors < static_cast<uint64_t>(offset) + sectors) {
+      return Err("region file " + path.string() + " has chunk index " + std::to_string(i) + " pointing past the allocated sectors");
+    }
+    if (!ifs.seekg(static_cast<std::streamoff>(offset) * 4096, std::ios::beg)) {
+      return Err("cannot seek to chunk payload in " + path.string());
+    }
+    unsigned char head[5];
+    if (!ifs.read(reinterpret_cast<char *>(head), sizeof(head))) {
+      return Err("cannot read chunk payload header in " + path.string());
+    }
+    uint32_t length = GetU32BE(head);
+    uint64_t maxLength = static_cast<uint64_t>(sectors) * 4096 - 4;
+    if (length == 0 || maxLength < length) {
+      return Err("region file " + path.string() + " has an invalid payload length for chunk index " + std::to_string(i));
+    }
+    uint64_t payloadEnd = static_cast<uint64_t>(offset) * 4096 + 4 + length;
+    if (size < payloadEnd) {
+      return Err("region file " + path.string() + " has a truncated payload for chunk index " + std::to_string(i));
     }
     ranges.push_back({offset, sectors, i});
   }
@@ -274,37 +294,7 @@ Status ReadRegionPlan(fs::path const &path, int32_t rx, int32_t rz, RegionPlan &
       return Err("region file " + path.string() + " has overlapping chunk sectors (index " + std::to_string(ranges[i - 1].fIndex) + " and " + std::to_string(ranges[i].fIndex) + ")");
     }
   }
-
-  for (Range const &range : ranges) {
-    if (!ifs.seekg(static_cast<std::streamoff>(range.fOffset) * 4096, std::ios::beg)) {
-      return Err("cannot seek to chunk payload in " + path.string());
-    }
-    unsigned char head[5];
-    if (!ifs.read(reinterpret_cast<char *>(head), sizeof(head))) {
-      return Err("cannot read chunk payload header in " + path.string());
-    }
-    uint32_t length = GetU32BE(head);
-    uint64_t maxLength = static_cast<uint64_t>(range.fSectors) * 4096 - 4;
-    if (length == 0 || maxLength < length) {
-      return Err("region file " + path.string() + " has an invalid payload length for chunk index " + std::to_string(range.fIndex));
-    }
-  }
   return Status::Ok();
-}
-
-std::vector<int> SelectedLocalIndices(RegionPlan const &plan, std::unordered_set<Pos2i, Pos2iHasher> const &toDelete) {
-  std::vector<int> indices;
-  for (int i = 0; i < 1024; i++) {
-    if (plan.fLocations[i] == 0) {
-      continue;
-    }
-    int64_t const cx = static_cast<int64_t>(plan.fRegionX) * 32 + (i % 32);
-    int64_t const cz = static_cast<int64_t>(plan.fRegionZ) * 32 + (i / 32);
-    if (toDelete.find(Pos2i(static_cast<int32_t>(cx), static_cast<int32_t>(cz))) != toDelete.end()) {
-      indices.push_back(i);
-    }
-  }
-  return indices;
 }
 
 // Rewrites one region file without decoding any chunk payload:
@@ -392,11 +382,14 @@ Status WritePrunedRegion(RegionPlan const &plan, std::vector<int> const &selecte
       continue;
     }
     uint32_t sectors = loc & 0xFF;
-    if (!src.seekg(static_cast<std::streamoff>(static_cast<uint64_t>(loc >> 8) * 4096), std::ios::beg)) {
+    uint64_t const sourceOffset = static_cast<uint64_t>(loc >> 8) * 4096;
+    if (!src.seekg(static_cast<std::streamoff>(sourceOffset), std::ios::beg)) {
       dst.close();
       return fail("cannot seek to chunk payload in " + plan.fPath.string());
     }
-    uint64_t remaining = static_cast<uint64_t>(sectors) * 4096;
+    uint64_t const declaredBytes = static_cast<uint64_t>(sectors) * 4096;
+    uint64_t const availableBytes = sourceOffset < plan.fFileSize ? plan.fFileSize - sourceOffset : 0;
+    uint64_t remaining = std::min<uint64_t>(declaredBytes, availableBytes);
     while (remaining > 0) {
       size_t const amount = static_cast<size_t>(std::min<uint64_t>(remaining, buffer.size()));
       src.read(buffer.data(), static_cast<std::streamsize>(amount));
@@ -410,6 +403,20 @@ Status WritePrunedRegion(RegionPlan const &plan, std::vector<int> const &selecte
         return fail("cannot write chunk payload to " + tmp.string());
       }
       remaining -= amount;
+    }
+    // Pad a partial final source sector so the rewritten region is complete.
+    uint64_t padding = declaredBytes > availableBytes ? declaredBytes - availableBytes : 0;
+    if (padding > 0) {
+      std::fill(buffer.begin(), buffer.end(), 0);
+      while (padding > 0) {
+        size_t const amount = static_cast<size_t>(std::min<uint64_t>(padding, buffer.size()));
+        dst.write(buffer.data(), static_cast<std::streamsize>(amount));
+        if (!dst) {
+          dst.close();
+          return fail("cannot pad chunk payload in " + tmp.string());
+        }
+        padding -= amount;
+      }
     }
   }
   dst.flush();

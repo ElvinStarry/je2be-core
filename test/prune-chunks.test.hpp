@@ -480,3 +480,89 @@ TEST_CASE("prune-chunks-bedrock-world") {
 
   fs::remove_all(dir);
 }
+
+TEST_CASE("prune-chunks-java-partial-final-sector") {
+  using namespace je2be::prune;
+
+  auto makeWorld = []() {
+    auto dir = MakePruneTempDir("java-partial");
+    WriteFile(dir / "level.dat", "");
+    fs::create_directories(dir / "region");
+    auto tag0 = std::make_shared<CompoundTag>();
+    tag0->set(u8"xPos", je2be::Int(0));
+    auto tag1 = std::make_shared<CompoundTag>();
+    tag1->set(u8"xPos", je2be::Int(1));
+    auto editor = mcfile::je::McaEditor::Open(dir / "region" / "r.0.0.mca");
+    REQUIRE(editor);
+    REQUIRE(editor->insert(0, 0, *tag0));
+    REQUIRE(editor->insert(1, 0, *tag1));
+    REQUIRE(editor->write(dir / "region" / "r.0.0.mca"));
+    return dir;
+  };
+  auto truncateLastPayload = [](fs::path const &path, bool dropOneByte) {
+    std::string bytes = ReadFile(path);
+    uint32_t bestOffset = 0;
+    uint32_t bestSectors = 0;
+    for (int i = 0; i < 1024; i++) {
+      uint32_t loc = (static_cast<uint32_t>(static_cast<unsigned char>(bytes[i * 4])) << 24) | (static_cast<uint32_t>(static_cast<unsigned char>(bytes[i * 4 + 1])) << 16) | (static_cast<uint32_t>(static_cast<unsigned char>(bytes[i * 4 + 2])) << 8) | static_cast<uint32_t>(static_cast<unsigned char>(bytes[i * 4 + 3]));
+      if (loc == 0) {
+        continue;
+      }
+      if ((loc >> 8) >= bestOffset) {
+        bestOffset = loc >> 8;
+        bestSectors = loc & 0xFF;
+      }
+    }
+    REQUIRE(bestOffset >= 2);
+    REQUIRE(bestSectors >= 1);
+    size_t const at = static_cast<size_t>(bestOffset) * 4096;
+    REQUIRE(bytes.size() >= at + 4);
+    uint32_t length = (static_cast<uint32_t>(static_cast<unsigned char>(bytes[at])) << 24) | (static_cast<uint32_t>(static_cast<unsigned char>(bytes[at + 1])) << 16) | (static_cast<uint32_t>(static_cast<unsigned char>(bytes[at + 2])) << 8) | static_cast<uint32_t>(static_cast<unsigned char>(bytes[at + 3]));
+    REQUIRE(length >= 1);
+    size_t const payloadEnd = at + 4 + length;
+    REQUIRE(payloadEnd <= bytes.size());
+    bytes.resize(dropOneByte ? payloadEnd - 1 : payloadEnd);
+    WriteFile(path, bytes);
+    return bytes;
+  };
+
+  SUBCASE("complete-payload-without-trailing-padding") {
+    auto dir = makeWorld();
+    auto config = ParseTestConfig(PruneConfigJson(""));
+    JavaWorldLocation location;
+    REQUIRE(LocateJavaWorld(dir, CanonicalDimension::Overworld, location).ok());
+    JavaPruneResult keepResult;
+    REQUIRE(PruneJavaWorld(location, config, Action::Keep, keepResult).ok());
+    CHECK(keepResult.fDeletedChunks == 0);
+    std::string const before = ReadFile(dir / "region" / "r.0.0.mca");
+    truncateLastPayload(dir / "region" / "r.0.0.mca", false);
+    std::string const truncated = ReadFile(dir / "region" / "r.0.0.mca");
+    JavaPruneResult noopResult;
+    REQUIRE(PruneJavaWorld(location, config, Action::Keep, noopResult).ok());
+    CHECK(ReadFile(dir / "region" / "r.0.0.mca") == truncated);
+
+    auto deleteConfig = ParseTestConfig(PruneConfigJson(R"({"action":"delete","minCx":0,"maxCx":0,"minCz":0,"maxCz":0})"));
+    JavaPruneResult deleteResult;
+    REQUIRE(PruneJavaWorld(location, deleteConfig, Action::Keep, deleteResult).ok());
+    auto editor = mcfile::je::McaEditor::Open(dir / "region" / "r.0.0.mca");
+    REQUIRE(editor);
+    auto kept = editor->get(1, 0);
+    REQUIRE(kept);
+    CHECK(kept->int32(u8"xPos") == 1);
+    CHECK(!editor->get(0, 0));
+    fs::remove_all(dir);
+  }
+
+  SUBCASE("missing-one-payload-byte-is-rejected") {
+    auto dir = makeWorld();
+    truncateLastPayload(dir / "region" / "r.0.0.mca", true);
+    std::string const before = ReadFile(dir / "region" / "r.0.0.mca");
+    auto config = ParseTestConfig(PruneConfigJson(R"({"action":"delete","minCx":0,"maxCx":0,"minCz":0,"maxCz":0})"));
+    JavaWorldLocation location;
+    REQUIRE(LocateJavaWorld(dir, CanonicalDimension::Overworld, location).ok());
+    JavaPruneResult result;
+    CHECK(!PruneJavaWorld(location, config, Action::Keep, result).ok());
+    CHECK(ReadFile(dir / "region" / "r.0.0.mca") == before);
+    fs::remove_all(dir);
+  }
+}
