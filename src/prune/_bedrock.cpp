@@ -577,6 +577,10 @@ Status PruneBedrockWorld(std::filesystem::path const &input, Config const &confi
   if (!st.ok()) {
     return JE2BE_ERROR_PUSH(st);
   }
+  // Materialize the tombstones into SSTs and drop the superseded values. This
+  // also makes the deletion visible to readers that only inspect table files
+  // and reclaims disk space immediately.
+  db->CompactRange(nullptr, nullptr);
   return Status::Ok();
 }
 
