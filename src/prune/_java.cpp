@@ -357,10 +357,19 @@ Status WritePrunedRegion(RegionPlan const &plan, std::vector<int> const &selecte
   }
 
   fs::path tmp = plan.fPath.parent_path() / (plan.fPath.filename().string() + ".prune-tmp");
-  std::error_code ec;
-  fs::remove(tmp, ec);
-  if (ec && ec != std::errc::no_such_file_or_directory) {
-    return Err("cannot remove stale temporary file " + tmp.string() + ": " + ec.message());
+  PathKind tmpKind;
+  Status tmpStatus = ClassifyPath(tmp, tmpKind);
+  if (!tmpStatus.ok()) {
+    return JE2BE_ERROR_PUSH(tmpStatus);
+  }
+  if (tmpKind != PathKind::Missing) {
+    if (tmpKind != PathKind::RegularFile) {
+      return Err("temporary region path " + tmp.string() + " is not a regular file");
+    }
+    std::error_code removeError;
+    if (!fs::remove(tmp, removeError)) {
+      return Err("cannot remove stale temporary file " + tmp.string() + ": " + removeError.message());
+    }
   }
   auto fail = [&](std::string const &message) {
     std::error_code removeError;

@@ -249,7 +249,7 @@ TEST_CASE("prune-chunks-java-world") {
   JavaPruneResult result;
   je2be::Status javaStatus = PruneJavaWorld(location, config, Action::Delete, result);
   if (!javaStatus.ok() && javaStatus.error()) {
-    INFO("PruneJavaWorld: " << javaStatus.error()->fWhat);
+    std::cerr << "PruneJavaWorld failed: " << javaStatus.error()->fWhat << std::endl;
   }
   REQUIRE(javaStatus.ok());
   CHECK(result.fMapFiles == 1);
@@ -430,7 +430,7 @@ TEST_CASE("prune-chunks-bedrock-world") {
   BedrockPruneResult result;
   je2be::Status bedrockStatus = PruneBedrockWorld(dir, config, Action::Delete, result);
   if (!bedrockStatus.ok() && bedrockStatus.error()) {
-    INFO("PruneBedrockWorld: " << bedrockStatus.error()->fWhat);
+    std::cerr << "PruneBedrockWorld failed: " << bedrockStatus.error()->fWhat << std::endl;
   }
   REQUIRE(bedrockStatus.ok());
   CHECK(result.fMapRecords == 1);
