@@ -680,13 +680,16 @@ Status RemoveExternalFiles(std::vector<fs::path> const &directories, std::unorde
     }
     for (Pos2i const &p : deleted) {
       fs::path path = dir / ("c." + std::to_string(p.fX) + "." + std::to_string(p.fZ) + ".mcc");
-      std::error_code existsError;
-      bool const isFile = fs::is_regular_file(path, existsError);
-      if (existsError) {
-        return Err("cannot inspect external chunk file " + path.string() + ": " + existsError.message());
+      PathKind sidecarKind;
+      Status st = ClassifyPath(path, sidecarKind);
+      if (!st.ok()) {
+        return JE2BE_ERROR_PUSH(st);
       }
-      if (!isFile) {
+      if (sidecarKind == PathKind::Missing) {
         continue;
+      }
+      if (sidecarKind != PathKind::RegularFile) {
+        return Err("external chunk path " + path.string() + " is not a regular file");
       }
       std::error_code removeError;
       if (!fs::remove(path, removeError)) {

@@ -122,25 +122,25 @@ bool LooksLikeChunkKeyShape(std::string const &key, int32_t &cx, int32_t &cz, Ca
     return true;
   }
   case 13: {
-    auto d = FromBedrockDimension(ReadI32LE(key, 8));
-    if (!d) {
+    int32_t const d = ReadI32LE(key, 8);
+    if (d != 1 && d != 2) {
       return false;
     }
     cx = ReadI32LE(key, 0);
     cz = ReadI32LE(key, 4);
     tag = static_cast<uint8_t>(key[12]);
-    dimension = *d;
+    dimension = d == 1 ? CanonicalDimension::Nether : CanonicalDimension::End;
     return true;
   }
   case 14: {
-    auto d = FromBedrockDimension(ReadI32LE(key, 8));
-    if (!d || static_cast<uint8_t>(key[12]) != 0x2f) {
+    int32_t const d = ReadI32LE(key, 8);
+    if ((d != 1 && d != 2) || static_cast<uint8_t>(key[12]) != 0x2f) {
       return false;
     }
     cx = ReadI32LE(key, 0);
     cz = ReadI32LE(key, 4);
     tag = 0x2f;
-    dimension = *d;
+    dimension = d == 1 ? CanonicalDimension::Nether : CanonicalDimension::End;
     return true;
   }
   case 17: {
@@ -154,14 +154,14 @@ bool LooksLikeChunkKeyShape(std::string const &key, int32_t &cx, int32_t &cz, Ca
     return true;
   }
   case 21: {
-    auto d = FromBedrockDimension(ReadI32LE(key, 8));
-    if (!d || static_cast<uint8_t>(key[12]) != 0x78) {
+    int32_t const d = ReadI32LE(key, 8);
+    if ((d != 1 && d != 2) || static_cast<uint8_t>(key[12]) != 0x78) {
       return false;
     }
     cx = ReadI32LE(key, 0);
     cz = ReadI32LE(key, 4);
     tag = 0x78;
-    dimension = *d;
+    dimension = d == 1 ? CanonicalDimension::Nether : CanonicalDimension::End;
     return true;
   }
   default:

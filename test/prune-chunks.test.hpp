@@ -247,7 +247,11 @@ TEST_CASE("prune-chunks-java-world") {
   JavaWorldLocation location;
   REQUIRE(LocateJavaWorld(dir, CanonicalDimension::Overworld, location).ok());
   JavaPruneResult result;
-  REQUIRE(PruneJavaWorld(location, config, Action::Delete, result).ok());
+  je2be::Status javaStatus = PruneJavaWorld(location, config, Action::Delete, result);
+  if (!javaStatus.ok() && javaStatus.error()) {
+    INFO("PruneJavaWorld: " + javaStatus.error()->fWhat);
+  }
+  REQUIRE(javaStatus.ok());
   CHECK(result.fMapFiles == 1);
   CHECK(result.fExistingChunks == 3);
   CHECK(result.fDeletedChunks == 2);
@@ -424,7 +428,11 @@ TEST_CASE("prune-chunks-bedrock-world") {
     {"action":"delete","minCx":0,"maxCx":0,"minCz":0,"maxCz":1}
   )", "delete"));
   BedrockPruneResult result;
-  REQUIRE(PruneBedrockWorld(dir, config, Action::Delete, result).ok());
+  je2be::Status bedrockStatus = PruneBedrockWorld(dir, config, Action::Delete, result);
+  if (!bedrockStatus.ok() && bedrockStatus.error()) {
+    INFO("PruneBedrockWorld: " + bedrockStatus.error()->fWhat);
+  }
+  REQUIRE(bedrockStatus.ok());
   CHECK(result.fMapRecords == 1);
   CHECK(result.fExistingChunks == 3);
   CHECK(result.fDeletedChunks == 2);
