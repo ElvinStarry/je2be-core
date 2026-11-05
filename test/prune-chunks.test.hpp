@@ -200,8 +200,8 @@ TEST_CASE("prune-chunks-java-world") {
 
   auto makeTag = [](int x, int z) {
     auto tag = std::make_shared<CompoundTag>();
-    tag->set(u8"xPos", Int(x));
-    tag->set(u8"zPos", Int(z));
+    tag->set(u8"xPos", je2be::Int(x));
+    tag->set(u8"zPos", je2be::Int(z));
     return tag;
   };
   {
@@ -228,13 +228,13 @@ TEST_CASE("prune-chunks-java-world") {
     // A stored overworld map centered at block (16, 0) with scale 0 covers
     // chunk (1, 0), so that chunk must survive --default delete.
     auto data = std::make_shared<CompoundTag>();
-    data->set(u8"dimension", String(u8"minecraft:overworld"));
-    data->set(u8"xCenter", Int(16));
-    data->set(u8"zCenter", Int(0));
-    data->set(u8"scale", Byte(0));
+    data->set(u8"dimension", je2be::String(u8"minecraft:overworld"));
+    data->set(u8"xCenter", je2be::Int(16));
+    data->set(u8"zCenter", je2be::Int(0));
+    data->set(u8"scale", je2be::Byte(0));
     auto root = std::make_shared<CompoundTag>();
     root->set(u8"data", data);
-    root->set(u8"DataVersion", Int(4903));
+    root->set(u8"DataVersion", je2be::Int(4903));
     fs::create_directories(dir / "data");
     auto stream = std::make_shared<mcfile::stream::GzFileOutputStream>(dir / "data" / "map_0.dat");
     REQUIRE(CompoundTag::Write(*root, stream, mcfile::Encoding::Java));
@@ -285,7 +285,7 @@ TEST_CASE("prune-chunks-java-external-chunk") {
   fs::path regionPath = dir / "region" / "r.0.0.mca";
 
   auto tag = std::make_shared<CompoundTag>();
-  tag->set(u8"xPos", Int(1));
+  tag->set(u8"xPos", je2be::Int(1));
   {
     auto editor = mcfile::je::McaEditor::Open(regionPath);
     REQUIRE(editor);
@@ -337,24 +337,24 @@ TEST_CASE("prune-chunks-bedrock-world") {
   fs::path dbDir = dir / "db";
 
   auto mapTag = std::make_shared<CompoundTag>();
-  mapTag->set(u8"mapId", Long(1));
-  mapTag->set(u8"dimension", Byte(0));
-  mapTag->set(u8"scale", Byte(0));
-  mapTag->set(u8"xCenter", Int(16));
-  mapTag->set(u8"zCenter", Int(0));
+  mapTag->set(u8"mapId", je2be::Long(1));
+  mapTag->set(u8"dimension", je2be::Byte(0));
+  mapTag->set(u8"scale", je2be::Byte(0));
+  mapTag->set(u8"xCenter", je2be::Int(16));
+  mapTag->set(u8"zCenter", je2be::Int(0));
   std::string const mapValue = SerializeLittleEndian(*mapTag);
 
   auto deletedVillageInfo = std::make_shared<CompoundTag>();
-  deletedVillageInfo->set(u8"X0", Int(1600));
-  deletedVillageInfo->set(u8"X1", Int(1615));
-  deletedVillageInfo->set(u8"Z0", Int(1600));
-  deletedVillageInfo->set(u8"Z1", Int(1615));
+  deletedVillageInfo->set(u8"X0", je2be::Int(1600));
+  deletedVillageInfo->set(u8"X1", je2be::Int(1615));
+  deletedVillageInfo->set(u8"Z0", je2be::Int(1600));
+  deletedVillageInfo->set(u8"Z1", je2be::Int(1615));
   std::string const deletedVillageValue = SerializeLittleEndian(*deletedVillageInfo);
   auto keptVillageInfo = std::make_shared<CompoundTag>();
-  keptVillageInfo->set(u8"X0", Int(16));
-  keptVillageInfo->set(u8"X1", Int(31));
-  keptVillageInfo->set(u8"Z0", Int(0));
-  keptVillageInfo->set(u8"Z1", Int(15));
+  keptVillageInfo->set(u8"X0", je2be::Int(16));
+  keptVillageInfo->set(u8"X1", je2be::Int(31));
+  keptVillageInfo->set(u8"Z0", je2be::Int(0));
+  keptVillageInfo->set(u8"Z1", je2be::Int(15));
   std::string const keptVillageValue = SerializeLittleEndian(*keptVillageInfo);
 
   auto actorValue = SerializeLittleEndian(*std::make_shared<CompoundTag>());
@@ -428,7 +428,7 @@ TEST_CASE("prune-chunks-bedrock-world") {
   CHECK(result.fMapRecords == 1);
   CHECK(result.fExistingChunks == 3);
   CHECK(result.fDeletedChunks == 2);
-  CHECK(result.fKeptByMapProtection == 1);
+  CHECK(result.fProtectedChunks == 1);
 
   {
     leveldb::Options options;
