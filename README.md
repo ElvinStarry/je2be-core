@@ -64,14 +64,19 @@ maps use `data/map_<id>.dat` (legacy) or `data/minecraft/maps/<id>.dat`
 
 The tool iterates the chunks/keys that actually exist in the world and tests
 each against the last-wins config rectangles and the protected map rectangles.
-It does not enumerate the (possibly unbounded) configured rectangles.
+It does not enumerate the (possibly unbounded) configured rectangles. Optional
+metadata fields such as `createdAt` and `source` are accepted but ignored; only
+`schemaVersion`, `format`, `dimension`, `chunkSize`, `overlapPolicy`, region
+actions, and coordinates affect execution.
 
 ### Safety
 
 Stop the world/server first. `prune-chunks` takes Java's `session.lock` with a
-non-blocking `fcntl` write lock (`LockFile` on Windows) and fails fast if the
-world is in use; Bedrock is opened through live LevelDB, which takes the
-database `LOCK`. **Back up the world before running a destructive prune.**
+non-blocking `fcntl` write lock (`LockFile` on Windows) without rewriting the
+marker file. Bedrock clients lock the manifest rather than `db/LOCK`, so the
+tool also takes a non-blocking LevelDB lock on `db/<MANIFEST>` before opening
+the database; either lock failure exits before any write. **Back up the world
+before running a destructive prune.**
 
 Before writing, the tool validates the whole config, parses every stored map
 in the target dimension, and validates every region header/sector range (Java)
@@ -79,13 +84,14 @@ or map record (Bedrock). A damaged map, an unknown map field layout, an
 overlapping/out-of-range region entry, or an unreadable record causes an error
 and exit *before* any chunk data is written.
 
-Atomicity limits: Java region compaction writes a temporary file and renames
-it over the original per region file; in-place slot clearing (used when a
-region contains external chunks or an unreadable payload) is a sequence of
-header and payload writes. Bedrock deletions are batched LevelDB writes.
-There is no cross-file transaction: a crash or I/O error partway through can
-leave a partially pruned but individually consistent world. Re-running the
-same config is idempotent for the chunks that remain.
+Atomicity limits: each Java region file is rewritten to a same-directory
+temporary file (kept sectors copied byte-for-byte, selected entries dropped)
+and renamed over the original, so one region file is never left half-written.
+Sidecar `.mcc` removal happens after the region rewrites, and the three
+`region`/`entities`/`poi` files are separate. Bedrock deletions use batched
+LevelDB writes. There is no cross-file transaction: a crash or I/O error
+partway through can leave a partially pruned but individually consistent
+world. Re-running the same config is idempotent for the chunks that remain.
 
 ## Override world settings
 

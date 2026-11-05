@@ -63,6 +63,9 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel 2
 
+      - name: Test prune-chunks
+        run: ./build/Release/je2be-test.exe --test-case="prune-chunks-*"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -107,6 +110,9 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel 2
+
+      - name: Test prune-chunks
+        run: ./build/je2be-test --test-case="prune-chunks-*"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -159,6 +165,9 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release --parallel 2
+
+      - name: Test prune-chunks
+        run: ./build/je2be-test --test-case="prune-chunks-*"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

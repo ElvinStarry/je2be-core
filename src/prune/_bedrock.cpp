@@ -7,6 +7,7 @@
 #include <minecraft-file.hpp>
 
 #include <leveldb/db.h>
+#include <leveldb/env.h>
 #include <leveldb/iterator.h>
 #include <leveldb/options.h>
 #include <leveldb/write_batch.h>
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <charconv>
 #include <cstring>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <unordered_map>
@@ -166,6 +168,64 @@ bool LooksLikeChunkKeyShape(std::string const &key, int32_t &cx, int32_t &cz, Ca
     return false;
   }
 }
+
+std::string TrimAsciiWhitespace(std::string s) {
+  auto isSpace = [](unsigned char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+  };
+  size_t begin = 0;
+  while (begin < s.size() && isSpace(static_cast<unsigned char>(s[begin]))) {
+    begin++;
+  }
+  size_t end = s.size();
+  while (begin < end && isSpace(static_cast<unsigned char>(s[end - 1]))) {
+    end--;
+  }
+  return s.substr(begin, end - begin);
+}
+
+// Bedrock clients do not lock db/LOCK; they keep db/<MANIFEST> locked while
+// the world is open. Lock the manifest before opening LevelDB so a running
+// game cannot be modified just because db/LOCK happened to be free.
+class BedrockManifestLock {
+public:
+  ~BedrockManifestLock() {
+    if (fLock) {
+      leveldb::Env::Default()->UnlockFile(fLock);
+      fLock = nullptr;
+    }
+  }
+
+  Status lock(fs::path const &dbDir) {
+    std::ifstream ifs(dbDir / "CURRENT", std::ios::binary);
+    if (!ifs) {
+      return Err("cannot read " + (dbDir / "CURRENT").string());
+    }
+    std::string name;
+    std::getline(ifs, name);
+    name = TrimAsciiWhitespace(name);
+    if (name.empty() || name.find('/') != std::string::npos || name.find('\\') != std::string::npos || name.find("..") != std::string::npos) {
+      return Err("invalid Bedrock CURRENT manifest name in " + dbDir.string());
+    }
+    fs::path manifest = dbDir / name;
+    std::error_code ec;
+    bool const isFile = fs::is_regular_file(manifest, ec);
+    if (ec) {
+      return Err("cannot inspect Bedrock manifest " + manifest.string() + ": " + ec.message());
+    }
+    if (!isFile) {
+      return Err("Bedrock manifest " + manifest.string() + " does not exist");
+    }
+    leveldb::Status st = leveldb::Env::Default()->LockFile(manifest, &fLock);
+    if (!st.ok()) {
+      return Err("Bedrock database " + dbDir.string() + " is in use (manifest lock): " + st.ToString());
+    }
+    return Status::Ok();
+  }
+
+private:
+  leveldb::FileLock *fLock = nullptr;
+};
 
 Status ReadMapProtection(leveldb::DB *db, CanonicalDimension target, MapProtection &protection, uint64_t &mapRecords) {
   leveldb::ReadOptions ro;
@@ -323,6 +383,12 @@ Status PruneBedrockWorld(std::filesystem::path const &input, Config const &confi
   }
   if (!fs::is_regular_file(worldDir / "level.dat", ec) || ec) {
     return Err(worldDir.string() + " is not a Bedrock world directory (level.dat not found)");
+  }
+
+  BedrockManifestLock manifestLock;
+  Status lockStatus = manifestLock.lock(dbDir);
+  if (!lockStatus.ok()) {
+    return JE2BE_ERROR_PUSH(lockStatus);
   }
 
   leveldb::Options options;

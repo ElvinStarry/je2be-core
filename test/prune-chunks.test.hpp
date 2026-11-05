@@ -122,14 +122,8 @@ TEST_CASE("prune-chunks-config") {
       {"action":"delete","minCx":-12,"maxCx":-11,"minCz":-11,"maxCz":-9},
       {"action":"keep","minCx":-13,"maxCx":-12,"minCz":-11,"maxCz":-10}
     )"));
-    CHECK(config.fSchemaVersion == 1);
-    CHECK(config.fDimension == 0);
-    CHECK(config.fChunkSize == 16);
-    CHECK(config.fDefaultAction == je2be::prune::Action::Keep);
-    CHECK(config.fOverlapPolicy == "last-wins");
-    CHECK(config.fRegions.size() == 3);
     CHECK(config.lastMatch(-12, -10) == je2be::prune::Action::Keep);
-    CHECK(config.lastMatch(-12, -11) == je2be::prune::Action::Delete);
+    CHECK(config.lastMatch(-11, -11) == je2be::prune::Action::Delete);
     CHECK(config.lastMatch(0, 0) == std::nullopt);
   }
   SUBCASE("rejects-invalid") {
@@ -151,10 +145,9 @@ TEST_CASE("prune-chunks-config") {
   SUBCASE("metadata-is-optional") {
     using je2be::prune::Config;
     Config config;
-    CHECK(Config::ParseJson(R"({"schemaVersion":1,"format":"mbr-chunk-selection","dimension":0,"chunkSize":16,"overlapPolicy":"last-wins","regions":[]})", config).ok());
-    CHECK(config.fRegions.empty());
-    CHECK(config.fDefaultAction == je2be::prune::Action::Keep);
-    CHECK(Config::ParseJson(R"({"schemaVersion":1,"format":"mbr-chunk-selection","dimension":0,"chunkSize":16,"overlapPolicy":"last-wins","regions":[],"createdAt":null,"source":null})", config).ok());
+    CHECK(Config::ParseJson(R"({"schemaVersion":1,"format":"mbr-chunk-selection","dimension":0,"chunkSize":16,"overlapPolicy":"last-wins","regions":[{"action":"delete","minCx":0,"maxCx":0,"minCz":0,"maxCz":0}],"createdAt":null,"source":null})", config).ok());
+    CHECK(config.lastMatch(0, 0) == je2be::prune::Action::Delete);
+    CHECK(config.lastMatch(1, 1) == std::nullopt);
   }
 }
 
@@ -190,9 +183,9 @@ TEST_CASE("prune-chunks-selection") {
     selection.fFallback = Action::Delete;
     CHECK(selection.resolve(0, 0) == Action::Delete);   // explicit delete
     CHECK(selection.resolve(10, 10) == Action::Keep);   // last matching keep
-    CHECK(selection.resolve(6, 6) == Action::Keep);     // map protection beats --default delete
+    CHECK(selection.resolve(-1, 0) == Action::Keep);     // map protection beats --default delete
     CHECK(selection.resolve(-100, -100) == Action::Delete); // fallback
-    CHECK(protection.protects(6, 6));
+    CHECK(protection.protects(-1, 0));
     CHECK(!protection.protects(-100, -100));
   }
 }

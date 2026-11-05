@@ -44,6 +44,35 @@ std::string ErrnoString(int e) {
   return Errno::StringFromErrno(e);
 }
 
+enum class PathKind {
+  Missing,
+  Directory,
+  RegularFile,
+  Other,
+};
+
+// Distinguishes "optional path does not exist" (normal) from permission and
+// I/O errors (must abort before any destructive write).
+Status ClassifyPath(fs::path const &path, PathKind &out) {
+  std::error_code ec;
+  fs::file_status const status = fs::status(path, ec);
+  if (status.type() == fs::file_type::not_found) {
+    out = PathKind::Missing;
+    return Status::Ok();
+  }
+  if (ec) {
+    return Err("cannot inspect " + path.string() + ": " + ec.message());
+  }
+  if (fs::is_directory(status)) {
+    out = PathKind::Directory;
+  } else if (fs::is_regular_file(status)) {
+    out = PathKind::RegularFile;
+  } else {
+    out = PathKind::Other;
+  }
+  return Status::Ok();
+}
+
 // Takes the vanilla session.lock with a non-blocking write lock. The file is
 // opened without truncation and is never rewritten: only the lock matters.
 class SessionLockGuard {
@@ -400,14 +429,18 @@ struct FileEntry {
 };
 
 Status EnumerateRegionFiles(fs::path const &directory, std::vector<FileEntry> &out) {
-  std::error_code ec;
-  bool const isDirectory = fs::is_directory(directory, ec);
-  if (ec) {
-    return Err("cannot inspect region directory " + directory.string() + ": " + ec.message());
+  PathKind kind;
+  Status st = ClassifyPath(directory, kind);
+  if (!st.ok()) {
+    return JE2BE_ERROR_PUSH(st);
   }
-  if (!isDirectory) {
+  if (kind == PathKind::Missing) {
     return Status::Ok();
   }
+  if (kind != PathKind::Directory) {
+    return Err("region path " + directory.string() + " is not a directory");
+  }
+  std::error_code ec;
   fs::directory_iterator itr(directory, ec);
   if (ec) {
     return Err("cannot list region directory " + directory.string() + ": " + ec.message());
@@ -481,19 +514,23 @@ Status EnumerateMapFiles(JavaWorldLocation const &location, std::vector<JavaMapF
 
   std::set<std::string> visited;
   for (fs::path const &dir : candidates) {
-    std::error_code ec;
     std::string key = dir.lexically_normal().string();
     if (!visited.insert(key).second) {
       continue;
     }
-    bool const isDirectory = fs::is_directory(dir, ec);
-    if (ec) {
-      return Err("cannot inspect map directory " + dir.string() + ": " + ec.message());
+    PathKind kind;
+    Status st = ClassifyPath(dir, kind);
+    if (!st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
     }
-    if (!isDirectory) {
+    if (kind == PathKind::Missing) {
       continue;
     }
+    if (kind != PathKind::Directory) {
+      return Err("map path " + dir.string() + " is not a directory");
+    }
     bool const mapsDirectory = dir.filename() == "maps";
+    std::error_code ec;
     fs::directory_iterator itr(dir, ec);
     if (ec) {
       return Err("cannot list map directory " + dir.string() + ": " + ec.message());
@@ -630,13 +667,16 @@ Status ScanJavaMaps(JavaWorldLocation const &location, CanonicalDimension target
 
 Status RemoveExternalFiles(std::vector<fs::path> const &directories, std::unordered_set<Pos2i, Pos2iHasher> const &deleted, uint64_t &removed) {
   for (fs::path const &dir : directories) {
-    std::error_code ec;
-    bool const isDirectory = fs::is_directory(dir, ec);
-    if (ec) {
-      return Err("cannot inspect region directory " + dir.string() + ": " + ec.message());
+    PathKind kind;
+    Status st = ClassifyPath(dir, kind);
+    if (!st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
     }
-    if (!isDirectory) {
+    if (kind == PathKind::Missing) {
       continue;
+    }
+    if (kind != PathKind::Directory) {
+      return Err("region path " + dir.string() + " is not a directory");
     }
     for (Pos2i const &p : deleted) {
       fs::path path = dir / ("c." + std::to_string(p.fX) + "." + std::to_string(p.fZ) + ".mcc");
@@ -661,32 +701,40 @@ Status RemoveExternalFiles(std::vector<fs::path> const &directories, std::unorde
 } // namespace
 
 Status LocateJavaWorld(std::filesystem::path const &input, CanonicalDimension dimension, JavaWorldLocation &out) {
-  std::error_code ec;
-  bool const isDirectory = fs::is_directory(input, ec);
-  if (ec) {
-    return Err("cannot inspect input directory " + input.string() + ": " + ec.message());
+  PathKind inputKind;
+  Status st = ClassifyPath(input, inputKind);
+  if (!st.ok()) {
+    return JE2BE_ERROR_PUSH(st);
   }
-  if (!isDirectory) {
+  if (inputKind == PathKind::Missing) {
     return Err("input directory " + input.string() + " does not exist");
+  }
+  if (inputKind != PathKind::Directory) {
+    return Err("input path " + input.string() + " is not a directory");
   }
   fs::path levelRoot;
   bool paper = false;
-  ec.clear();
-  bool const rootLevel = fs::is_regular_file(input / "level.dat", ec);
-  if (ec) {
-    return Err("cannot inspect " + (input / "level.dat").string() + ": " + ec.message());
+  PathKind rootLevelKind;
+  st = ClassifyPath(input / "level.dat", rootLevelKind);
+  if (!st.ok()) {
+    return JE2BE_ERROR_PUSH(st);
   }
-  if (rootLevel) {
+  if (rootLevelKind == PathKind::RegularFile) {
     levelRoot = input;
     paper = false;
+  } else if (rootLevelKind != PathKind::Missing) {
+    return Err((input / "level.dat").string() + " is not a regular file");
   } else {
-    ec.clear();
-    bool const paperLevel = fs::is_regular_file(input / "world" / "level.dat", ec);
-    if (ec) {
-      return Err("cannot inspect " + (input / "world" / "level.dat").string() + ": " + ec.message());
+    PathKind paperLevelKind;
+    st = ClassifyPath(input / "world" / "level.dat", paperLevelKind);
+    if (!st.ok()) {
+      return JE2BE_ERROR_PUSH(st);
     }
-    if (!paperLevel) {
+    if (paperLevelKind == PathKind::Missing) {
       return Err(input.string() + " is not a Java world directory (level.dat not found)");
+    }
+    if (paperLevelKind != PathKind::RegularFile) {
+      return Err((input / "world" / "level.dat").string() + " is not a regular file");
     }
     levelRoot = input / "world";
     paper = true;
@@ -706,21 +754,24 @@ Status PruneJavaWorld(JavaWorldLocation const &location, Config const &config, A
   if (!target) {
     return Err("unsupported dimension in config");
   }
-  std::error_code ec;
-  bool const dimensionExists = fs::is_directory(location.fDimensionDirectory, ec);
-  if (ec) {
-    return Err("cannot inspect dimension directory " + location.fDimensionDirectory.string() + ": " + ec.message());
+  PathKind dimensionKind;
+  Status st = ClassifyPath(location.fDimensionDirectory, dimensionKind);
+  if (!st.ok()) {
+    return JE2BE_ERROR_PUSH(st);
   }
-  if (!dimensionExists) {
+  if (dimensionKind == PathKind::Missing) {
     if (*target != CanonicalDimension::Overworld) {
       result.fWarnings.push_back("dimension directory " + location.fDimensionDirectory.string() + " does not exist; nothing to prune");
       return Status::Ok();
     }
     return Err("overworld directory " + location.fDimensionDirectory.string() + " does not exist");
   }
+  if (dimensionKind != PathKind::Directory) {
+    return Err("dimension path " + location.fDimensionDirectory.string() + " is not a directory");
+  }
 
   SessionLockGuard lock;
-  Status st = lock.lock(location.fLevelRoot);
+  st = lock.lock(location.fLevelRoot);
   if (!st.ok()) {
     return JE2BE_ERROR_PUSH(st);
   }
