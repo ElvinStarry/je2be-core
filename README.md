@@ -2,6 +2,91 @@
 
 Core library of data converter for Minecraft Java, Bedrock, Xbox360, and PS3 Edition.
 
+## Prune chunks in place
+
+`prune-chunks` deletes selected chunks from an existing Java or Bedrock world
+**in place**. It never converts or rewrites the content of chunks that are
+kept.
+
+```sh
+prune-chunks -i /path/to/world -c selection.json -d keep
+```
+
+- `-i`, `--input`: Java world directory (vanilla, paper server root, or the
+  modern `dimensions/minecraft/...` layout) or Bedrock world directory
+  containing `db/` and `level.dat`.
+- `-c`, `--config`: selection file in the `mbr-chunk-selection` format
+  (`schemaVersion` 1, `chunkSize` 16, inclusive signed chunk coordinates,
+  `overlapPolicy` `last-wins`). Regions are evaluated in file order and the
+  last matching region wins.
+- `-d`, `--default`: action for chunks outside every configured region:
+  `keep` (default) or `delete`. The JSON `defaultAction` is UI/export metadata;
+  this flag overrides it for execution.
+
+`dimension` uses the Java numeric dimension ids: `-1` nether, `0` overworld,
+`1` end. Bedrock worlds map these to their internal `1`/`0`/`2` values. Only
+the selected dimension is touched; all other dimensions are left untouched, so
+`-d delete` cannot remove chunks from a dimension the config did not select.
+
+### Deletion precedence
+
+1. The last matching config region (explicit `keep` or `delete`).
+2. Stored map display protection: chunks covered by any valid stored map in
+   the target dimension are kept.
+3. The CLI `-d` value.
+
+Map protection is deliberately conservative. Every valid map record stored in
+the world is protected, including maps that currently have no item, frame, or
+chest reference; map copies that share an id share the same stored map. A
+config region that explicitly says `delete` overrides map protection. Java
+maps use `data/map_<id>.dat` (legacy) or `data/minecraft/maps/<id>.dat`
+(current); Bedrock maps are `map_<id>` LevelDB records. Map ranges are
+`128 << scale` blocks centered on `xCenter`/`zCenter`.
+
+### What is removed
+
+- Java: the chunk slots in `region/`, `entities/`, and `poi/` of the target
+  dimension, plus external `c.<cx>.<cz>.mcc` payloads. Worlds without
+  `entities/` or `poi/` (legacy layouts) are supported; those files simply do
+  not exist. Kept external chunks and their sidecars are left byte-identical.
+- Bedrock: every chunk-keyed record at an existing chunk coordinate of the
+  target dimension (terrain, sub-chunks, versions, data 2D/3D, block entities,
+  entities, pending ticks, structure bounds, and future chunk tags with the
+  same key shape), the per-chunk `digp` entity index, and `actorprefix`
+  records whose last referring `digp` was removed. `map_*`, player records,
+  `VILLAGE_*`, `portals`, `mobevents`, `PosTrackDB-*`,
+  `LevelChunkMetaDataDictionary`, `structuretemplate_*`, and other global
+  records are **preserved**: they are not owned by a single chunk. In
+  particular, village records span multiple chunks and are updated by the
+  game; deleting a village because part of its area was pruned would discard
+  surviving village state. Orphaned global entries are a documented boundary
+  of this tool.
+
+The tool iterates the chunks/keys that actually exist in the world and tests
+each against the last-wins config rectangles and the protected map rectangles.
+It does not enumerate the (possibly unbounded) configured rectangles.
+
+### Safety
+
+Stop the world/server first. `prune-chunks` takes Java's `session.lock` with a
+non-blocking `fcntl` write lock (`LockFile` on Windows) and fails fast if the
+world is in use; Bedrock is opened through live LevelDB, which takes the
+database `LOCK`. **Back up the world before running a destructive prune.**
+
+Before writing, the tool validates the whole config, parses every stored map
+in the target dimension, and validates every region header/sector range (Java)
+or map record (Bedrock). A damaged map, an unknown map field layout, an
+overlapping/out-of-range region entry, or an unreadable record causes an error
+and exit *before* any chunk data is written.
+
+Atomicity limits: Java region compaction writes a temporary file and renames
+it over the original per region file; in-place slot clearing (used when a
+region contains external chunks or an unreadable payload) is a sequence of
+header and payload writes. Bedrock deletions are batched LevelDB writes.
+There is no cross-file transaction: a crash or I/O error partway through can
+leave a partially pruned but individually consistent world. Re-running the
+same config is idempotent for the chunks that remain.
+
 ## Override world settings
 
 ```sh

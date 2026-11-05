@@ -121,6 +121,7 @@ jobs:
             build/dump
             build/j2j-uuid
             build/j2b2j
+            build/prune-chunks
             build/je2be-test
             build/libje2be.a
             include/
@@ -172,6 +173,7 @@ jobs:
             build/dump
             build/j2j-uuid
             build/j2b2j
+            build/prune-chunks
             build/je2be-test
             build/libje2be.a
             include/

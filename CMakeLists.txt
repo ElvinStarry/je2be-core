@@ -428,6 +428,13 @@ set(je2be_src_files
   src/xbox360/_save-bin.hpp
   src/xbox360/_stfs-ext.hpp
   src/xbox360/_stfs.hpp
+  src/prune/_bedrock.cpp
+  src/prune/_bedrock.hpp
+  src/prune/_config.cpp
+  src/prune/_config.hpp
+  src/prune/_java.cpp
+  src/prune/_java.hpp
+  src/prune/_selection.hpp
   src/zip-file.cpp
   #end je2be-src files
   )
@@ -457,7 +464,8 @@ set(test_files
   test/performance-structures.test.hpp
   test/java-uuid-replacer.test.hpp
   test/new-content-26.2.test.hpp
-  test/world-data-override.test.hpp)
+  test/world-data-override.test.hpp
+  test/prune-chunks.test.hpp)
 
 if (NOT WIN32)
   list(APPEND je2be_link_libraries pthread)
@@ -649,6 +657,10 @@ target_link_libraries(dump je2be)
 add_executable(j2j-uuid example/j2j-uuid.cpp ${je2be_header_files})
 target_link_libraries(j2j-uuid ${je2be_exe_link_libraries} cxxopts)
 
+add_executable(prune-chunks example/prune-chunks.cpp ${je2be_header_files})
+target_link_libraries(prune-chunks ${je2be_exe_link_libraries} cxxopts)
+target_include_directories(prune-chunks PRIVATE src)
+
 add_executable(je2be-test ${test_files} ${je2be_header_files})
 target_link_libraries(je2be-test ${je2be_exe_link_libraries} doctest)
 target_include_directories(je2be-test PRIVATE src)
@@ -665,7 +677,7 @@ if (MSVC)
   else()
     set(mimalloc_redirect_dll "mimalloc-redirect.dll")
   endif()
-  foreach(target IN ITEMS j2b b2j x2j j2j-uuid je2be-test)
+  foreach(target IN ITEMS j2b b2j x2j j2j-uuid prune-chunks je2be-test)
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND "${CMAKE_COMMAND}" -E copy "${mimalloc_BINARY_DIR}/\$(Configuration)/mimalloc.dll" "$<TARGET_FILE_DIR:${target}>/"
       COMMAND "${CMAKE_COMMAND}" -E copy "${mimalloc_BINARY_DIR}/\$(Configuration)/${mimalloc_redirect_dll}" "$<TARGET_FILE_DIR:${target}>/"
@@ -679,6 +691,6 @@ if (MSVC)
   endif()
 endif()
 
-list(APPEND all_files ${test_files} ${je2be_header_files} ${je2be_src_files} example/j2b.cpp example/b2j.cpp example/cli-world-data-overrides.hpp example/lce-progress.hpp example/x2j.cpp example/p2j.cpp example/dump.cpp example/j2j-uuid.cpp test/j2b2j.cpp)
+list(APPEND all_files ${test_files} ${je2be_header_files} ${je2be_src_files} example/j2b.cpp example/b2j.cpp example/cli-world-data-overrides.hpp example/lce-progress.hpp example/x2j.cpp example/p2j.cpp example/dump.cpp example/j2j-uuid.cpp example/prune-chunks.cpp test/j2b2j.cpp)
 source_group(TREE ${CMAKE_CURRENT_LIST_DIR} FILES ${all_files})
 source_group(TREE ${libminecraft-file_SOURCE_DIR} PREFIX deps/mcfile FILES ${mcfile_header_files})
