@@ -422,11 +422,12 @@ Status WritePrunedRegion(RegionPlan const &plan, std::vector<int> const &selecte
     return fail("cannot close temporary region file " + tmp.string());
   }
   src.close();
-  fs::rename(tmp, plan.fPath, ec);
-  if (ec) {
+  std::error_code renameError;
+  fs::rename(tmp, plan.fPath, renameError);
+  if (renameError) {
     std::error_code removeError;
     fs::remove(tmp, removeError);
-    return Err("cannot replace " + plan.fPath.string() + " with pruned data: " + ec.message());
+    return Err("cannot replace " + plan.fPath.string() + " with pruned data: " + renameError.message());
   }
   return Status::Ok();
 }
